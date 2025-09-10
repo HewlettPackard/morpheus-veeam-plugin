@@ -126,11 +126,11 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 				managedServers << hierarchyRoot
 			} else {
 				def objCategory = "veeam.backup.managedServer.${backupProvider.id}"
-				log.debug("createBackup objCategory: ${objCategory} typeFilter: ${getManagedServerType()}")
+				log.debug("createBackup objCategory: ${objCategory} typeFilter: ${backupTypeProvider.getManagedServerType()}")
 				def managedServerResults = morpheus.services.referenceData.list(new DataQuery().withFilters(
 				        new DataFilter("account.id", backupProvider.account.id),
 				        new DataFilter("category", objCategory),
-				        new DataFilter("typeValue", getManagedServerType())
+				        new DataFilter("typeValue", backupTypeProvider.getManagedServerType())
 				))
 				managedServerResults.each {
 					if(apiVersion > 1.3) {
@@ -708,7 +708,7 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 		try {
 			morpheus.services.referenceData.list(new DataQuery().withFilters(
 			        new DataFilter("category", "veeam.backup.managedServer.${backupProvider.id}"),
-			        new DataFilter("typeValue", getManagedServerType())
+			        new DataFilter("typeValue", backupTypeProvider.getManagedServerType())
 			)).each {ReferenceData managedServer ->
 				if(!rtn.data.size()) {
 					def rootRef = managedServer.getConfigProperty("hierarchyRootUid")
