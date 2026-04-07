@@ -740,7 +740,7 @@ class ApiService {
 		def tokenResults = getToken(authConfig)
 		if(tokenResults.success == true) {
 			def taskId
-			def apiPath = authConfig.basePath + '/jobs/' + jobId
+			def apiPath = authConfig.basePath + '/jobs/' + VeeamUtils.extractVeeamUuid(jobId.toString())
 			def headers = buildHeaders([:], tokenResults.token)
 			def query = [action:'start']
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
@@ -993,15 +993,15 @@ class ApiService {
 		if(results?.success == true) {
 			backupResult = [
 				backupSessionId: backupSessionId,
-				backupJobName: results.data?.JobName?.toString(),
-				startTime: results.data?.CreationTimeUTC?.toString(),
-				endTime: results.data?.EndTimeUTC?.toString(),
-				state: results.data?.State?.toString(),
-				result: results.data?.Result?.toString(),
-				progress: results.data?.Progress?.toString(),
-				links: results.data?.Links
+				backupJobName: (results.data?.jobName ?: results.data?.JobName)?.toString(),
+				startTime: (results.data?.creationTimeUTC ?: results.data?.CreationTimeUTC)?.toString(),
+				endTime: (results.data?.endTimeUTC ?: results.data?.EndTimeUTC)?.toString(),
+				state: (results.data?.state ?: results.data?.State)?.toString(),
+				result: (results.data?.result ?: results.data?.Result)?.toString(),
+				progress: (results.data?.progress ?: results.data?.Progress)?.toString(),
+				links: results.data?.links ?: results.data?.Links
 			]
-			log.debug("getBackupResult Links: ${results.data?.Links}")
+			log.debug("getBackupResult Links: ${backupResult.links}")
 			if(backupResult.result == "Success" || backupResult.result == "Warning"){
 				def stats = getBackupResultStats(url, token, backupSessionId)
 				backupResult.totalSize = stats?.totalSize ?: 0
