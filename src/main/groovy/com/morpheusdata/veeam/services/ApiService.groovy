@@ -100,7 +100,7 @@ class ApiService {
 				authConfig.token = rtn.token
 				authConfig.sessionId = rtn.sessionId
 			} else {
-				rtn.content = results.content
+				rtn.content = results.content ?: results.data?.toString()
 				rtn.data = results.data
 				rtn.errorCode = results.errorCode
 				rtn.headers = results.headers
@@ -408,14 +408,14 @@ class ApiService {
 		log.debug("got: ${results}")
 		rtn.success = results?.success
 		if(results.success) {
-			def job = new groovy.util.XmlSlurper().parseText(results.content)
+			def job = results.data
 			def name = job['@Name'].toString()
 			rtn.jobId = backupJobId
 			rtn.jobName = name
 			rtn.scheduleEnabled = job.ScheduleEnabled.toString()
 			rtn.scheduleCron = VeeamScheduleUtils.decodeScheduling(job)
 		} else {
-			rtn.content = results.content
+			rtn.content = results.content ?: results.data?.toString()
 			rtn.data = results.data
 			rtn.errorCode = results.errorCode
 			rtn.headers = results.headers
@@ -436,7 +436,7 @@ class ApiService {
 		if(rtn.success) {
 			rtn.data = results.data
 		} else {
-			rtn.content = results.content
+			rtn.content = results.content ?: results.data?.toString()
 			rtn.data = results.data
 			rtn.errorCode = results.errorCode
 			rtn.headers = results.headers
@@ -791,7 +791,7 @@ class ApiService {
 		log.debug("got: ${results}")
 		rtn.success = results?.success
 		if(results?.success == true) {
-			def response = new groovy.util.XmlSlurper().parseText(results.content)
+			def response = results.data
 			rtn.taskId = response.TaskId.toString()
 		} else if(results?.errorCode?.toString() == "404") {
 			rtn.success = true
@@ -922,7 +922,7 @@ class ApiService {
 			log.debug("got: ${results}")
 			rtn.success = results?.success
 			if(results?.success == true) {
-				def response = new groovy.util.XmlSlurper().parseText(results.content)
+				def response = results.data
 				rtn.data.taskId = response.TaskId.toString()
 			} else if(results.errorCode?.toString() == "400") {
 				rtn.success = true
@@ -959,7 +959,7 @@ class ApiService {
 		log.debug("disableBackupJobSchedule got: ${results}")
 		rtn.success = results?.success
 		if(results?.success == true) {
-			def response = new groovy.util.XmlSlurper().parseText(results.content)
+			def response = results.data
 			rtn.taskId = response.TaskId.toString()
 		}
 		return rtn
@@ -1023,7 +1023,7 @@ class ApiService {
 		log.debug("got: ${results}")
 		rtn.success = results?.success
 		if(results?.success == true) {
-			def response = new groovy.util.XmlSlurper().parseText(results.content)
+			def response = results.data
 			response.Entities.BackupJobSessions.BackupJobSession.each { backupJobSession ->
 				def uid = backupJobSession.JobUid.toString()
 
@@ -1154,7 +1154,7 @@ class ApiService {
 				HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
 				def restorePointsResults = httpApiClient.callXmlApi(authConfig.apiUrl, "/api/query", null, null, requestOpts, 'GET')
 				if(restorePointsResults.success) {
-					def restorePointsResponse = new groovy.util.XmlSlurper().parseText(restorePointsResults.content)
+					def restorePointsResponse = restorePointsResults.data
 					def restoreRef = restorePointsResponse.Entities.VmRestorePoints.VmRestorePoint.getAt(0)
 					if(restoreRef) {
 						rtn.data.externalId = restoreRef["@UID"].toString()
@@ -1213,7 +1213,7 @@ class ApiService {
 		log.debug("getRestoreResult results: ${results}")
 		rtn.success = results?.success
 		if(results?.success == true) {
-			def response = new groovy.util.XmlSlurper().parseText(results.content)
+			def response = results.data
 			def startTime = response.CreationTimeUTC.toString()
 			def endTime = response.EndTimeUTC?.toString()
 			def state = response.State.toString()
@@ -1243,7 +1243,7 @@ class ApiService {
 		rtn.success = results?.success
 		if(rtn.success == true) {
 			def totalSize = 0
-			def response = new groovy.util.XmlSlurper().parseText(results.content)
+			def response = results.data
 			response.BackupTaskSession.each { backupTaskSession ->
 				rtn.totalSize += backupTaskSession.TotalSize.toLong()
 			}
@@ -1270,7 +1270,7 @@ class ApiService {
 			def results = httpApiClient.callXmlApi(url, restorePath, requestOpts, 'POST')
 			rtn.success = results?.success
 			if(rtn.success == true) {
-				def response = new groovy.util.XmlSlurper().parseText(results.content)
+				def response = results.data
 				//get the restore session id
 				restoreTaskId = response.TaskId
 			}
@@ -1327,7 +1327,7 @@ class ApiService {
 			log.debug("got vmbyid results: ${results}")
 			rtn.success = results?.success
 			if(rtn.success == true) {
-				def response = new groovy.util.XmlSlurper().parseText(results.content)
+				def response = results.data
 				vmId = response.HierarchyItem.ObjectRef.toString()
 				rtn.vmId = vmId
 			}
@@ -1357,7 +1357,7 @@ class ApiService {
 		log.debug("getVmId results: ${results}")
 		rtn.success = results?.success
 		if(rtn.success == true) {
-			def response = new groovy.util.XmlSlurper().parseText(results.content)
+			def response = results.data
 			rtn.vmId = results.data.HierarchyItem.ObjectRef.toString()
 			rtn.vmName = results.data.HierarchyItem.ObjectName.toString()
 		}
@@ -1437,12 +1437,12 @@ class ApiService {
 			} else if(results.errorCode?.toString() == "500") {
 				def errorMessage
 				try {
-					def response = new groovy.util.XmlSlurper(false,true).parseText(results.content)
+					def response = results.data
 					errorMessage = response["@Message"]
 				} catch (Exception ex1) {
 					try {
 						// we might encounter json here?
-						def response = new groovy.json.JsonSlurper().parseText(results.content)
+						def response = results.data
 						errorMessage = response.Message
 					} catch (Exception ex2) {
 						// if all else fails, just treat it as a string

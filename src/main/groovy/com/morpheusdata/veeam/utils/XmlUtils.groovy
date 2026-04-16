@@ -7,10 +7,10 @@ class XmlUtils {
 
 	// XML Utils
 	static xmlToMap(String xml, Boolean camelCase = false) {
-		def rtn = xml ? xmlToMap(new groovy.util.XmlSlurper().parseText(xml), camelCase) : [:]
+		def rtn = xml ? xmlToMap(new groovy.xml.XmlSlurper().parseText(xml), camelCase) : [:]
 	}
 
-	static xmlToMap(groovy.util.slurpersupport.NodeChild node, Boolean camelCase = false) {
+	static xmlToMap(groovy.xml.slurpersupport.NodeChild node, Boolean camelCase = false) {
 		def rtn = [:]
 		def children = node?.children()
 		def attributeMap = node?.attributes()

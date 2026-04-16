@@ -27,8 +27,8 @@ group = 'com.morpheusdata.veeam'
 ext.isReleaseVersion = !version.endsWith("SNAPSHOT")
 
 java {
-	sourceCompatibility = JavaVersion.toVersion('1.11')
-    targetCompatibility = JavaVersion.toVersion('1.11')
+	sourceCompatibility = JavaVersion.toVersion('25')
+    targetCompatibility = JavaVersion.toVersion('25')
 }
 
 repositories {
@@ -41,12 +41,17 @@ repositories {
 
 configurations {
 	provided
+	configureEach {
+		resolutionStrategy.capabilitiesResolution.all {
+			selectHighestVersion()
+		}
+	}
 }
 
 dependencies {
 	provided "com.morpheusdata:morpheus-plugin-api:$morpheusApiVersion"
 	
-	provided "org.codehaus.groovy:groovy-all:$groovyVersion"
+	provided "org.apache.groovy:groovy-all:$groovyVersion"
 	implementation 'commons-beanutils:commons-beanutils:1.9.3'
 	implementation "org.slf4j:slf4j-api:$slf4jVersion"
 	implementation "org.slf4j:slf4j-parent:$slf4jVersion"
@@ -58,7 +63,7 @@ dependencies {
 	testImplementation 'org.apache.httpcomponents:httpcore:4.4.5'
 	testImplementation "org.slf4j:slf4j-parent:$slf4jVersion"
 
-	testImplementation "org.codehaus.groovy:groovy-all:$groovyVersion"
+	testImplementation "org.apache.groovy:groovy-all:$groovyVersion"
 	testImplementation 'net.bytebuddy:byte-buddy:1.9.3'
 	testImplementation 'org.objenesis:objenesis:2.6'
 	testImplementation platform("org.spockframework:spock-bom:$spockVersion")
@@ -88,7 +93,7 @@ jar {
 				'Morpheus-Logo-Dark': 'assets/veeam.svg',
 				'Morpheus-Labels': 'Plugin, Backup',
 				'Morpheus-Repo': 'https://github.com/gomorpheus/morpheus-veeam-plugin',
-				'Morpheus-Min-Appliance-Version': "7.0.1"
+				'Morpheus-Min-Appliance-Version': "morphApplianceMinVersion"
 		)
 	}
 }
