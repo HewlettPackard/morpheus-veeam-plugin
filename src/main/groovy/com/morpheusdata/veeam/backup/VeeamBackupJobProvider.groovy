@@ -77,8 +77,13 @@ class VeeamBackupJobProvider implements BackupJobProvider {
 			} else if(opts.backupRepository) {
 				repositoryId = opts.backupRepository.toLong()
 			}
-			if(repositoryId) {
+			if(repositoryId && !backupJobModel.backupRepository) {
 				backupJobModel.backupRepository = morpheus.services.backupRepository.get(repositoryId)
+			}
+			// Fall back to the source job's repository if still not set (e.g. during provisioning where
+			// the repository selection is not passed through to backupJobConfig)
+			if(!backupJobModel.backupRepository && sourceBackupJobModel?.backupRepository) {
+				backupJobModel.backupRepository = sourceBackupJobModel.backupRepository
 			}
 
 			// in 6.3.5/7.0 the plugin service will handle the schedule. If schedule is blank then
