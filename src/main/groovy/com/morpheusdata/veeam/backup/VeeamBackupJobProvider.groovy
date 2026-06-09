@@ -74,7 +74,8 @@ class VeeamBackupJobProvider implements BackupJobProvider {
 			Long repositoryId = null
 			if(opts.target) {
 				repositoryId = opts.target.toLong()
-			} else if(opts.backupRepository) {
+			}
+			if(!repositoryId && opts.backupRepository) {
 				repositoryId = opts.backupRepository.toLong()
 			}
 			if(repositoryId) {
