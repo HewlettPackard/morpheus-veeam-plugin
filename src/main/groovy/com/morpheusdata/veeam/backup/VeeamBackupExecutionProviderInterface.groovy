@@ -375,7 +375,7 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 				).withSort("dateCreated", DataQuery.SortOrder.desc))
 
 				log.debug("last result: ${lastResult}")
-				def backupServerId = VeeamUtils.getBackupServerId(backup)
+				def backupServerId = VeeamUtils.getBackupServerId(backup) ?: backup.backupJob?.internalId
 				if(backupServerId) {
 					// get hierarchy ref and object ref, this should probably be moved up to creatBackup
 					String veeamObjectRef = backupTypeProvider.getVeeamObjectRef(authConfig, token, backup, backupProvider, computeServer)
@@ -408,7 +408,7 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 					}
 				} else {
 					rtn.success = false
-					rtn.error = "Managed server id required to start a quick backup"
+					rtn.error = "Backup server id required to start a quick backup"
 				}
 			}
 			apiService.logoutSession(authConfig.apiUrl, token, sessionId)
