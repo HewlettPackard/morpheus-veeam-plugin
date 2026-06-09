@@ -441,7 +441,7 @@ interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
 			def restorePoint
 			if(restoreLinkResponse.data.name() == "VmRestorePoints") {
 				restorePoint = restoreLinkResponse.data.VmRestorePoint.find { it.HierarchyObjRef.text().toString().toLowerCase() == objectRef?.toLowerCase() || it.VmName.text().toString() == vmName }
-				if(!restorePoint && opts.vCenterVmId) {
+				if(!restorePoint && vCenterVmId) {
 					restorePoint = restoreLinkResponse.data.VmRestorePoint.find { it.HierarchyObjRef.text().toString().endsWith(vCenterVmId) }
 				}
 			} else {

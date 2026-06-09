@@ -587,8 +587,32 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 
 									if(!veeamHierarchyRef) {
 										veeamHierarchyRef = backupTypeProvider.getVmHierarchyObjRef(backupResult.backup, server)
+										// Still null — hierarchy root was never persisted (e.g. sub-tenant backup where
+										// the managed server dropdown is not shown). Search all managed servers via the
+										// Veeam API to find the correct one, then persist for future use.
+										if(!veeamHierarchyRef) {
+											def vmRefId = backupTypeProvider.getVmRefId(server)
+											if(vmRefId) {
+												def apiVersion = VeeamUtils.getApiVersion(backupProvider)
+												morpheus.services.referenceData.list(new DataQuery().withFilters(
+														new DataFilter("account.id", backupProvider.account.id),
+														new DataFilter("category", "veeam.backup.managedServer.${backupProvider.id}"),
+														new DataFilter("typeValue", backupTypeProvider.getManagedServerType())
+												)).each { ReferenceData managedServer ->
+													if(!veeamHierarchyRef) {
+														def rootRef = apiVersion > 1.3 ? managedServer.getConfigProperty("hierarchyRootUid") : VeeamUtils.extractVeeamUuid(managedServer.keyValue)
+														def candidateRef = backupTypeProvider.getVmHierarchyObjRef(vmRefId, rootRef)
+														def lookupResult = apiService.lookupVm(authConfig.apiUrl, token, candidateRef)
+														if(lookupResult.vmId) {
+															veeamHierarchyRef = candidateRef
+															backup.setConfigProperty("veeamHierarchyRootUid", rootRef)
+														}
+													}
+												}
+											}
+										}
 										backup.setConfigProperty("veeamHierarchyRef", veeamHierarchyRef)
-										doSaveBackup
+										doSaveBackup = true
 									}
 
 									if(!veeamObjectRef) {

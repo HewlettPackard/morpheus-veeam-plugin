@@ -212,10 +212,8 @@ class VeeamBackupJobProvider implements BackupJobProvider {
 				return ServiceResponse.error("Failed to start Veeam backup job, unable to acquire access token.")
 			}
 
-			Account tmpAccount = opts.account ?: backupJobModel.account
 			List<Backup> jobBackups = []
 			this.morpheus.services.backup.list(new DataQuery().withFilters(
-			        new DataFilter<>('account.id', tmpAccount.id),
 			        new DataFilter<>('backupJob.id', backupJobModel.id),
 					new DataFilter<>('active', true)
 			)).each { Backup backup ->
