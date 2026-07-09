@@ -92,7 +92,7 @@ jar {
 				'Morpheus-Logo': 'assets/veeam.svg',
 				'Morpheus-Logo-Dark': 'assets/veeam.svg',
 				'Morpheus-Labels': 'Plugin, Backup',
-				'Morpheus-Repo': 'https://github.com/gomorpheus/morpheus-veeam-plugin',
+				'Morpheus-Repo': 'https://github.com/HewlettPackard/morpheus-veeam-plugin',
 				'Morpheus-Min-Appliance-Version': "morphApplianceMinVersion"
 		)
 	}
