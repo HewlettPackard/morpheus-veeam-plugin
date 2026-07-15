@@ -139,6 +139,7 @@ class VeeamBackupProvider extends AbstractBackupProvider {
 	 */
 	@Override
 	public Boolean getHasSchedule() { return true; }
+	
 
 	/**
 	 * The backup provider supports running multiple workload backups within an encapsulating job.

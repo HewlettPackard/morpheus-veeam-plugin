@@ -14,6 +14,8 @@ class VeeamOptionSourceProvider extends AbstractOptionSourceProvider {
 	VeeamPlugin plugin
 	MorpheusContext morpheusContext
 	ApiService apiService
+	boolean hasSchedule
+	boolean hasRetentionCount
 
 	VeeamOptionSourceProvider(VeeamPlugin plugin, MorpheusContext context, ApiService) {
 		this.plugin = plugin
