@@ -20,6 +20,8 @@ import com.morpheusdata.core.Plugin
 import com.morpheusdata.model.AccountCredential
 import com.morpheusdata.model.BackupProvider
 import com.morpheusdata.veeam.backup.VeeamBackupProvider
+import com.morpheusdata.veeam.datasets.VeeamBackupRepositoryDatasetProvider
+import com.morpheusdata.veeam.datasets.VeeamManagedServerDatasetProvider
 import com.morpheusdata.veeam.services.ApiService
 import groovy.util.logging.Slf4j
 
@@ -39,6 +41,8 @@ class VeeamPlugin extends Plugin {
 		this.apiService = new ApiService(this)
         this.registerProvider(new VeeamBackupProvider(this,this.morpheus, apiService))
 	    this.registerProvider(new VeeamOptionSourceProvider(this,this.morpheus, apiService))
+	    this.registerProvider(new VeeamManagedServerDatasetProvider(this,this.morpheus))
+	    this.registerProvider(new VeeamBackupRepositoryDatasetProvider(this,this.morpheus))
     }
 
     /**
