@@ -237,7 +237,19 @@ class VeeamBackupProvider extends AbstractBackupProvider {
 	 */
 	@Override
 	Collection<OptionType> getBackupOptionTypes() {
-		Collection<OptionType> optionTypes = []
+		Collection<OptionType> optionTypes = new ArrayList();
+		optionTypes << new OptionType(
+				code:"backupOptionType.veeam.repository", inputType:OptionType.InputType.SELECT, name:'repository', category:"backupOptionType.veeam",
+				fieldName:'repositoryId', fieldCode:'gomorpheus.optiontype.BackupRepository', fieldLabel:'Repository', fieldContext:'domain', fieldGroup:'default',
+				required:true, enabled:true, editable:true, global:false, placeHolder:null, helpBlock:'', defaultValue:null, custom:false,
+				displayOrder:10, fieldClass:null, optionSource:'backupRepositories'
+		)
+		optionTypes << new OptionType(
+				code:"backupOptionType.veeam.managedServer", inputType:OptionType.InputType.SELECT, name:'managedServer', category:"backupOptionType.veeam",
+				fieldName:'managedServerId', fieldCode:'gomorpheus.optiontype.ManagedServer', fieldLabel:'Managed Server', fieldContext:'domain', fieldGroup:'default',
+				required:true, enabled:true, editable:true, global:false, placeHolder:null, helpBlock:'', defaultValue:null, custom:false,
+				displayOrder:20, fieldClass:null, optionSource:'managedServers'
+		)
 		return optionTypes;
 	}
 	
