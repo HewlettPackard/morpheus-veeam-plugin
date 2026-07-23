@@ -11,6 +11,7 @@ import com.morpheusdata.core.data.DatasetQuery
 import com.morpheusdata.core.providers.AbstractDatasetProvider
 import com.morpheusdata.model.ReferenceData
 import com.morpheusdata.model.ResourcePermission
+import com.morpheusdata.veeam.backup.VeeamBackupProvider
 import com.morpheusdata.veeam.utils.VeeamUtils
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
@@ -63,8 +64,9 @@ class VeeamManagedServerDatasetProvider extends AbstractDatasetProvider<Referenc
         if (!account) {
             return Observable.empty()
         }
-        def managedServerType = resolveManagedServerType(query)
-        def backupProvider = resolveBackupProvider(query, account)
+        def cloud = resolveCloud(query, account)
+        def managedServerType = resolveManagedServerType(cloud)
+        def backupProvider = resolveVeeamBackupProvider(cloud, account)
         if (backupProvider) {
             def accessibleResourceIds = morpheus.services.resourcePermission.listAccessibleResources(account.id, ResourcePermission.ResourceType.ManagedServer, null, null)
             def dataQuery = new DataQuery().withFilters([
@@ -74,7 +76,7 @@ class VeeamManagedServerDatasetProvider extends AbstractDatasetProvider<Referenc
                     new DataFilter("enabled", true)
             ])
             def dataOrFilter = new DataOrFilter(
-                    new DataFilter("account", account),
+                    new DataFilter("account.id", account.id),
                     new DataAndFilter(
                             new DataFilter("account.masterAccount", true),
                             new DataFilter("visibility", "public")
@@ -84,7 +86,7 @@ class VeeamManagedServerDatasetProvider extends AbstractDatasetProvider<Referenc
                 dataOrFilter.withFilter(new DataFilter("id", "in", accessibleResourceIds))
             }
             dataQuery.withFilter(dataOrFilter)
-            return morpheus.services.referenceData.list(dataQuery)
+            return Observable.fromIterable(morpheus.services.referenceData.list(dataQuery))
         }
         return Observable.empty()
     }
@@ -99,9 +101,10 @@ class VeeamManagedServerDatasetProvider extends AbstractDatasetProvider<Referenc
         log.debug("managed servers: ${query.parameters}")
         List servers = []
         def account = query.user?.account
-        def managedServerType = resolveManagedServerType(query)
+        def cloud = account ? resolveCloud(query, account) : null
+        def managedServerType = resolveManagedServerType(cloud)
         def repoBackupServerId = resolveRepoBackupServerId(query)
-        def backupProvider = account ? resolveBackupProvider(query, account) : null
+        def backupProvider = cloud ? resolveVeeamBackupProvider(cloud, account) : null
         if (backupProvider) {
             def existingManagedServers = list(query).toList().blockingGet()
             if (existingManagedServers.size() > 0) {
@@ -139,7 +142,9 @@ class VeeamManagedServerDatasetProvider extends AbstractDatasetProvider<Referenc
     }
 
     /**
-     * Resolve the cloud from either the container (workload) or zone id supplied in the query params.
+     * Resolve the cloud from either the container (workload) or zone id supplied in the query params. The backup
+     * wizard always posts a bare {@code zoneId}, so the resolved cloud is the reliable source of context rather than
+     * the domain-scoped form fields (which vary between the backup modal and the provisioning wizard).
      */
     private resolveCloud(DatasetQuery query, account) {
         def cloud
@@ -156,40 +161,55 @@ class VeeamManagedServerDatasetProvider extends AbstractDatasetProvider<Referenc
     }
 
     /**
-     * Resolve the veeam backup provider associated with the cloud referenced by the query params.
+     * Resolve the veeam backup provider for the given cloud, mirroring the embedded {@code VeeamOptionSourceService}:
+     * prefer the cloud's integrated backup provider when it is veeam-typed, otherwise fall back to an enabled
+     * veeam provider owned by the account, then to a master/public veeam provider. The type filter keeps this
+     * self-contained, so the plugin never claims another backup provider plugin's integration.
      */
-    private resolveBackupProvider(DatasetQuery query, account) {
-        def cloud = resolveCloud(query, account)
+    private resolveVeeamBackupProvider(cloud, account) {
         def backupProvider
-        if (cloud?.backupProviders) {
-            def backupProviderIds = cloud.backupProviders.collect { it.id }
-            def backupProviders = morpheus.services.backupProvider.listById(backupProviderIds).toList()
-            backupProvider = backupProviders.find { it.type.code == 'veeam' }
+        if (cloud?.backupProvider) {
+            def integrated = morpheus.services.backupProvider.get(cloud.backupProvider.id)
+            if (integrated?.type?.code == VeeamBackupProvider.PROVIDER_CODE) {
+                backupProvider = integrated
+            }
+        }
+        if (!backupProvider && account) {
+            backupProvider = morpheus.services.backupProvider.find(new DataQuery().withFilters([
+                    new DataFilter('enabled', true),
+                    new DataFilter('type.code', VeeamBackupProvider.PROVIDER_CODE),
+                    new DataFilter('account.id', account.id)
+            ]))
+        }
+        if (!backupProvider) {
+            backupProvider = morpheus.services.backupProvider.find(new DataQuery().withFilters([
+                    new DataFilter('enabled', true),
+                    new DataFilter('type.code', VeeamBackupProvider.PROVIDER_CODE),
+                    new DataFilter('account.masterAccount', true),
+                    new DataFilter('visibility', 'public')
+            ]))
         }
         return backupProvider
     }
 
     /**
-     * Derive the managed server type from the zone type or backup type supplied in the query params.
+     * Derive the veeam managed server type from the cloud's type. The cloud is resolved from the bare {@code zoneId}
+     * the wizard always supplies, so this avoids depending on domain-scoped form fields (e.g. {@code backup.backupType})
+     * whose prefix differs between the backup modal and the provisioning wizard.
      */
-    private String resolveManagedServerType(DatasetQuery query) {
-        String managedServerType = ""
-        def zoneType = query.get("zoneType")
-        def backupType = query.get("backupType")
-        def backupTypeId = query.get("backupTypeId")
-        if (backupTypeId && backupTypeId.toString().isLong()) {
-            backupType = morpheus.services.backup.type.get(backupTypeId.toLong())?.code
+    private String resolveManagedServerType(cloud) {
+        switch (cloud?.cloudType?.code) {
+            case 'vmware':
+                return "VC"
+            case 'hyperv':
+                return "HvServer"
+            case 'scvmm':
+                return 'Scvmm'
+            case 'vcd':
+                return 'VcdSystem'
+            default:
+                return ""
         }
-        if (zoneType == 'vmware' || backupType == 'veeamVMWareBackup') {
-            managedServerType = "VC"
-        } else if (zoneType == 'hyperv' || backupType == 'veeamHypervBackup') {
-            managedServerType = "HvServer"
-        } else if (zoneType == 'scvmm' || backupType == 'veeamScvmmBackup') {
-            managedServerType = 'Scvmm'
-        } else if (zoneType == 'vcd' || backupType == 'veeamVcdBackup') {
-            managedServerType = 'VcdSystem'
-        }
-        return managedServerType
     }
 
     /**

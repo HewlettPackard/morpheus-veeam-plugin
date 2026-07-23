@@ -24,6 +24,8 @@ import groovy.util.logging.Slf4j
 @Slf4j
 class VeeamBackupProvider extends AbstractBackupProvider {
 
+	static final String PROVIDER_CODE = 'veeam'
+
 	ApiService apiService
 
 	VeeamBackupJobProvider backupJobProvider;
@@ -60,7 +62,7 @@ class VeeamBackupProvider extends AbstractBackupProvider {
 	 */
 	@Override
 	String getCode() {
-		return 'veeam'
+		return PROVIDER_CODE
 	}
 
 	/**
@@ -241,14 +243,14 @@ class VeeamBackupProvider extends AbstractBackupProvider {
 		optionTypes << new OptionType(
 				code:"backupOptionType.veeam.repository", inputType:OptionType.InputType.SELECT, name:'repository', category:"backupOptionType.veeam",
 				fieldName:'repositoryId', fieldCode:'gomorpheus.optiontype.BackupRepository', fieldLabel:'Repository', fieldContext:'domain', fieldGroup:'default',
-				required:true, enabled:true, editable:true, global:false, placeHolder:null, helpBlock:'', defaultValue:null, custom:false,
-				displayOrder:10, fieldClass:null, optionSource:'backupRepositories'
+				required:true, noSelection: false, noBlank: true, enabled:true, editable:true, global:false, placeHolder:null, helpBlock:'', defaultValue:null, custom:false,
+				displayOrder:10, fieldClass:null, optionSource:'veeamBackupRepository', optionSourceType:'veeam'
 		)
 		optionTypes << new OptionType(
 				code:"backupOptionType.veeam.managedServer", inputType:OptionType.InputType.SELECT, name:'managedServer', category:"backupOptionType.veeam",
 				fieldName:'managedServerId', fieldCode:'gomorpheus.optiontype.ManagedServer', fieldLabel:'Managed Server', fieldContext:'domain', fieldGroup:'default',
-				required:true, enabled:true, editable:true, global:false, placeHolder:null, helpBlock:'', defaultValue:null, custom:false,
-				displayOrder:20, fieldClass:null, optionSource:'managedServers'
+				required:true, noSelection: false, noBlank: true, enabled:true, editable:true, global:false, placeHolder:null, helpBlock:'', defaultValue:null, custom:false,
+				displayOrder:20, fieldClass:null, optionSource:'veeamManagedServer', optionSourceType:'veeam'
 		)
 		return optionTypes;
 	}
