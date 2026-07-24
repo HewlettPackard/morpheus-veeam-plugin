@@ -11,6 +11,7 @@ import com.morpheusdata.core.data.DatasetQuery
 import com.morpheusdata.core.providers.AbstractDatasetProvider
 import com.morpheusdata.model.BackupRepository
 import com.morpheusdata.model.ResourcePermission
+import com.morpheusdata.veeam.backup.VeeamBackupProvider
 import groovy.util.logging.Slf4j
 import io.reactivex.rxjava3.core.Observable
 
@@ -71,7 +72,7 @@ class VeeamBackupRepositoryDatasetProvider extends AbstractDatasetProvider<Backu
                     new DataFilter("enabled", true)
             ])
             def dataOrFilter = new DataOrFilter(
-                    new DataFilter("account", account),
+                    new DataFilter("account.id", account.id),
                     new DataAndFilter(
                             new DataFilter("account.masterAccount", true),
                             new DataFilter("visibility", "public")
@@ -81,7 +82,7 @@ class VeeamBackupRepositoryDatasetProvider extends AbstractDatasetProvider<Backu
                 dataOrFilter.withFilter(new DataFilter("id", "in", accessibleResourceIds))
             }
             dataQuery.withFilter(dataOrFilter)
-            return morpheus.services.backupRepository.list(dataQuery)
+            return Observable.fromIterable(morpheus.services.backupRepository.list(dataQuery))
         }
         return Observable.empty()
     }
@@ -114,11 +115,37 @@ class VeeamBackupRepositoryDatasetProvider extends AbstractDatasetProvider<Backu
      */
     private resolveBackupProvider(Long cloudId, account) {
         def cloud = morpheus.async.cloud.get(cloudId).blockingGet()
+        return resolveVeeamBackupProvider(cloud, account)
+    }
+
+    /**
+     * Resolve the veeam backup provider for the given cloud, mirroring the embedded {@code VeeamOptionSourceService}:
+     * prefer the cloud's integrated backup provider when it is veeam-typed, otherwise fall back to an enabled
+     * veeam provider owned by the account, then to a master/public veeam provider. The type filter keeps this
+     * self-contained, so the plugin never claims another backup provider plugin's integration.
+     */
+    private resolveVeeamBackupProvider(cloud, account) {
         def backupProvider
-        if (cloud?.backupProviders) {
-            def backupProviderIds = cloud.backupProviders.collect { it.id }
-            def backupProviders = morpheus.services.backupProvider.listById(backupProviderIds).toList()
-            backupProvider = backupProviders.find { it.type.code == 'veeam' }
+        if (cloud?.backupProvider) {
+            def integrated = morpheus.services.backupProvider.get(cloud.backupProvider.id)
+            if (integrated?.type?.code == VeeamBackupProvider.PROVIDER_CODE) {
+                backupProvider = integrated
+            }
+        }
+        if (!backupProvider && account) {
+            backupProvider = morpheus.services.backupProvider.find(new DataQuery().withFilters([
+                    new DataFilter('enabled', true),
+                    new DataFilter('type.code', VeeamBackupProvider.PROVIDER_CODE),
+                    new DataFilter('account.id', account.id)
+            ]))
+        }
+        if (!backupProvider) {
+            backupProvider = morpheus.services.backupProvider.find(new DataQuery().withFilters([
+                    new DataFilter('enabled', true),
+                    new DataFilter('type.code', VeeamBackupProvider.PROVIDER_CODE),
+                    new DataFilter('account.masterAccount', true),
+                    new DataFilter('visibility', 'public')
+            ]))
         }
         return backupProvider
     }
