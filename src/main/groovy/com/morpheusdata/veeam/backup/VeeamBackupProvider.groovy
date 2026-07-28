@@ -230,6 +230,12 @@ class VeeamBackupProvider extends AbstractBackupProvider {
 	@Override
 	Collection<OptionType> getBackupJobOptionTypes() {
 		Collection<OptionType> optionTypes = []
+		optionTypes << new OptionType(
+				code:"backupJobOptionType.veeam.schedule", inputType:OptionType.InputType.SELECT, name:'schedule', category:"backupJobOptionType.veeam",
+				fieldName:'scheduleTypeId', fieldCode:'gomorpheus.label.backupSchedule', fieldLabel:'Schedule', fieldContext:'domain', fieldGroup:'default',
+				required:false, noSelection: false, noBlank: true, enabled:true, editable:true, global:false, placeHolder:null, helpBlock:'', defaultValue:null, custom:false,
+				displayOrder:10, fieldClass:null, optionSource:'executeSchedules', config:'{"jobActions":["clone"]}'
+		)
 		return optionTypes;
 	}
 
