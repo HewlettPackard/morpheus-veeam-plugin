@@ -8,7 +8,9 @@ buildscript {
 	    maven { url "https://nexus.bertramlabs.com/content/repositories/publicReleases" }
     }
     dependencies {
-        classpath "com.github.johnrengelman:shadow:8.1.1"
+        // Using goooler/shadow fork instead of com.github.johnrengelman.shadow
+        // The original shadow plugin (8.1.1) is incompatible with Gradle 9.x
+        classpath "io.github.goooler.shadow:shadow-gradle-plugin:8.1.8"
         classpath "com.morpheusdata:morpheus-plugin-gradle:$morphGradleVersion"
         classpath "com.bertramlabs.plugins:asset-pipeline-gradle:$assetPipelineVersion"
     }
@@ -18,7 +20,7 @@ buildscript {
 apply plugin: 'java'
 apply plugin: 'groovy'
 apply plugin: 'idea'
-apply plugin: 'com.github.johnrengelman.shadow'
+apply plugin: 'io.github.goooler.shadow'
 apply plugin: 'asset-pipeline'
 apply plugin: 'com.morpheusdata.morpheus-plugin-gradle'
 
@@ -104,7 +106,7 @@ assets {
 
 
 task(console, dependsOn: 'classes', type: JavaExec) {
-	main = 'groovy.ui.Console'
+	mainClass = 'groovy.ui.Console'
 	classpath = sourceSets.main.compileClasspath + sourceSets.main.runtimeClasspath
 }
 
