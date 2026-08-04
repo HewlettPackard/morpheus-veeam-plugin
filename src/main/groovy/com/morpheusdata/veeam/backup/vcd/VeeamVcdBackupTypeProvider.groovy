@@ -130,7 +130,7 @@ class VeeamVcdBackupTypeProvider extends VeeamBackupTypeProvider {
 	 */
 	@Override
 	String getRestoreNewMode() {
-		return "VM_RESTORE"
+		return "DEFAULT"
 	}
 	
 	/**
