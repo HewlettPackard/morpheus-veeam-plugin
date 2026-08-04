@@ -430,6 +430,15 @@ class VeeamBackupProvider extends AbstractBackupProvider {
 		rtn
 	}
 
+	@Override
+	Boolean getHasEditJob() { return false; }
+
+	@Override
+	Boolean getHasRunJob() { return false; }
+	
+	@Override
+	Boolean getHasEditableJobCode() { return false; }
+
 	private verifyAuthentication(BackupProviderModel backupProviderModel, Map opts=[:]) {
 		def rtn = [success:false, invalidLogin:false, found:true]
 		opts.authConfig = opts.authConfig ?: apiService.getAuthConfig(backupProviderModel)
