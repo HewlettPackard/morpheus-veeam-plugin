@@ -146,4 +146,4 @@ The plugin communicates with the Veeam Backup Enterprise Manager REST API. Key e
 
 ## License
 
-Copyright 2022 Morpheus Data, LLC. Licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+Copyright 2022 Morpheus Data, LLC. Licensed under the [Apache License, Version 2.0](LICENSE).
