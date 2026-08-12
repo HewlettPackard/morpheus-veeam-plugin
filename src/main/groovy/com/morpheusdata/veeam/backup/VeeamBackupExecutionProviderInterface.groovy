@@ -377,7 +377,24 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 				log.debug("last result: ${lastResult}")
 				def backupServerId = VeeamUtils.getBackupServerId(backup) ?: backup.backupJob?.internalId
 				if(backupServerId) {
-					// get hierarchy ref and object ref, this should probably be moved up to creatBackup
+					// For sub-tenant backups, veeamHierarchyRootUid is never set via configureBackup
+					// (managed server dropdown is scoped to master tenant only). Look it up dynamically
+					// across all managed servers and cache it for future executions.
+					if(!VeeamUtils.getHierarchyRoot(backup)) {
+						log.debug("executeBackup: no hierarchyRoot found, searching managed servers for VM")
+						def vmRefId = backupTypeProvider.getVmRefId(computeServer)
+						def lookupResult = findManagedServerVmId(authConfig, token, backupTypeProvider.cloudType, backupProvider, vmRefId)
+						if(lookupResult.data?.managedServer) {
+							def rootUid = lookupResult.data.managedServer.getConfigProperty("hierarchyRootUid")
+							log.debug("executeBackup: found hierarchyRootUid ${rootUid} for VM ${vmRefId}")
+							backup.setConfigProperty("veeamHierarchyRootUid", rootUid)
+							morpheus.async.backup.save(backup).subscribe().dispose()
+						} else {
+							log.warn("executeBackup: could not find VM ${vmRefId} on any managed server")
+						}
+					}
+
+					// get hierarchy ref and object ref
 					String veeamObjectRef = backupTypeProvider.getVeeamObjectRef(authConfig, token, backup, backupProvider, computeServer)
 					String veeamHierarchyRef = backupTypeProvider.getVmHierarchyObjRef(backup, computeServer, veeamObjectRef)
 					backupTypeProvider.updateObjectAndHierarchyRefs(backup, veeamObjectRef, veeamHierarchyRef)
@@ -404,7 +421,7 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 						log.debug("executeBackup result: " + rtn)
 					} else {
 						rtn.success = false
-						rtn.error = "Could not find a VM with the VMWare ID ${computeServer.externalId} on the root ${hierarchyRoot}"
+						rtn.error = "Could not find VM with VMware ID ${computeServer.externalId} on any Veeam managed server"
 					}
 				} else {
 					rtn.success = false
