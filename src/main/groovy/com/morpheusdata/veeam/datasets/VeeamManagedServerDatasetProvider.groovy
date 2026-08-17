@@ -1,5 +1,6 @@
 package com.morpheusdata.veeam.datasets
 
+import com.morpheusdata.veeam.utils.JsonUtils
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.Plugin
 import com.morpheusdata.core.data.DataAndFilter
@@ -119,8 +120,8 @@ class VeeamManagedServerDatasetProvider extends AbstractDatasetProvider<Referenc
                             backupServerName = " (Backup Server: " + managedServerConfig.backupServerName + ")"
                             backupServerId = managedServerConfig.backupServerId
                         } else {
-                            def managedServerLink = managedServerConfig.links?.link.find { it.type == "ManagedServerReference" }
-                            def backupServerLink = managedServerConfig.links?.link.find { it.type == "BackupServer" }
+                            def managedServerLink = JsonUtils.findLink(managedServerConfig, "ManagedServerReference")
+                            def backupServerLink = JsonUtils.findLink(managedServerConfig, "BackupServer")
                             def managedServerId = VeeamUtils.extractVeeamUuid(managedServerLink.href)
                             backupServerId = VeeamUtils.extractVeeamUuid(backupServerLink.href)
                             backupServerName = " (Backup Server: " + (backupServerLink?.name ?: "N/A") + ")"
@@ -221,7 +222,7 @@ class VeeamManagedServerDatasetProvider extends AbstractDatasetProvider<Referenc
         if (repositoryId && repositoryId.toString().isLong()) {
             def repo = morpheus.services.backupRepository.get(repositoryId.toLong())
             def repoConfig = repo?.getConfigMap()
-            def backupServerHref = repoConfig?.links?.link?.find { it.type == "BackupServerReference" }?.href
+            def backupServerHref = JsonUtils.findLink(repoConfig, "BackupServerReference")?.href
             repoBackupServerId = VeeamUtils.extractVeeamUuid(backupServerHref)
         }
         return repoBackupServerId

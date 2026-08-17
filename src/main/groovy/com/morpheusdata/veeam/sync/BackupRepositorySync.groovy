@@ -1,5 +1,6 @@
 package com.morpheusdata.veeam.sync
 
+import com.morpheusdata.veeam.utils.JsonUtils
 import com.morpheusdata.core.BulkCreateResult
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.util.SyncTask
@@ -67,12 +68,12 @@ class BackupRepositorySync {
 			                 internalId: VeeamUtils.extractVeeamUuid(cloudItem.href)
 			]
 			//set platform
-			if (cloudItem.kind?.indexOf('indows') > -1)
+			if (cloudItem.kind?.toString()?.contains('indows'))
 				addConfig.platform = 'windows'
 			//enabled?
 			//capacity
-			def maxStorage = cloudItem.capacity?.toLong()
-			def freeStorage = cloudItem.freeSpace?.toLong()
+			def maxStorage = JsonUtils.toLong(cloudItem.capacity)
+			def freeStorage = JsonUtils.toLong(cloudItem.freeSpace)
 			if (maxStorage) {
 				addConfig.maxStorage = maxStorage
 				if (freeStorage)
@@ -109,8 +110,8 @@ class BackupRepositorySync {
 				doSave = true
 			}
 			//capacity
-			def maxStorage = masterItem.capacity?.toLong()
-			def freeStorage = masterItem.freeSpace?.toLong()
+			def maxStorage = JsonUtils.toLong(masterItem.capacity)
+			def freeStorage = JsonUtils.toLong(masterItem.freeSpace)
 			if(maxStorage && existingItem.maxStorage != maxStorage) {
 				existingItem.maxStorage = maxStorage
 				doSave = true

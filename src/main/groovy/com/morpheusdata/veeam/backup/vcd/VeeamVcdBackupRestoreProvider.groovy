@@ -11,7 +11,6 @@ import com.morpheusdata.veeam.backup.VeeamBackupTypeProvider
 import com.morpheusdata.veeam.services.ApiService
 import com.morpheusdata.veeam.utils.VeeamUtils
 import groovy.util.logging.Slf4j
-import groovy.xml.StreamingMarkupBuilder
 
 @Slf4j
 class VeeamVcdBackupRestoreProvider implements VeeamBackupRestoreProviderInterface {
@@ -41,26 +40,24 @@ class VeeamVcdBackupRestoreProvider implements VeeamBackupRestoreProviderInterfa
 		return restoreOpts
 	}
 
-	String buildRestoreSpec(String restorePath, String hierarchyRoot, String backupType, Map opts) {
-		String rtn
+	Map buildRestoreSpec(String restorePath, String hierarchyRoot, String backupType, Map opts) {
+		Map rtn
 		if(backupType != "veeamzip") {
 			def restorePointUid = VeeamUtils.extractVeeamUuid(restorePath)
 			def hierarchyRootUid = VeeamUtils.extractVeeamUuid(opts.hierarchyRoot)
-			def xml = new StreamingMarkupBuilder().bind() {
-				RestoreSpec("xmlns": "http://www.veeam.com/ent/v1.0", "xmlns:xsd": "http://www.w3.org/2001/XMLSchema", "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance") {
-					vCloudVmRestoreSpec() {
-						"PowerOnAfterRestore"(true)
-						"HierarchyRootUid"(hierarchyRootUid)
-						vAppRef("urn:${backupTypeProvider.cloudType}:Vapp:${hierarchyRootUid}.urn:vcloud:vapp:${opts.vAppId}")
-						VmRestoreParameters() {
-							VmRestorePointUid("urn:veeam:VmRestorePoint:${restorePointUid}")
-						}
-					}
-				}
-			}
-			rtn = xml.toString()
+			// request bodies remain PascalCase, only the response representation changed casing in Veeam 13
+			rtn = [
+				vCloudVmRestoreSpec: [
+					PowerOnAfterRestore: true,
+					HierarchyRootUid: hierarchyRootUid,
+					vAppRef: "urn:${backupTypeProvider.cloudType}:Vapp:${hierarchyRootUid}.urn:vcloud:vapp:${opts.vAppId}".toString(),
+					VmRestoreParameters: [
+						VmRestorePointUid: "urn:veeam:VmRestorePoint:${restorePointUid}".toString()
+					]
+				]
+			]
 		} else {
-			rtn = super.buildRestoreSpec(restorePath, hierarchyRoot, opts)
+			rtn = VeeamBackupRestoreProviderInterface.super.buildRestoreSpec(restorePath, hierarchyRoot, backupType, opts)
 		}
 
 		return rtn

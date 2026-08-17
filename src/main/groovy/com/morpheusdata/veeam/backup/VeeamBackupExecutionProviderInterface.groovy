@@ -1,5 +1,6 @@
 package com.morpheusdata.veeam.backup
 
+import com.morpheusdata.veeam.utils.JsonUtils
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.Plugin
 import com.morpheusdata.core.backup.BackupExecutionProvider
@@ -669,9 +670,10 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 							} else if(rtn.data.backupResult.status == BackupResult.Status.FAILED.toString()) {
 								def vmObjRef = backupTypeProvider.getVmHierarchyObjRef(backupResult.backup, server)
 								ServiceResponse taskSessionsResponse = apiService.getBackupSessionTaskSessions(apiUrl, token, backupSessionId)
-								Map vmBackupTaskSession = taskSessionsResponse.data.getAt("BackupTaskSessions").find { it.getAt("VmUid").toString() == vmObjRef.toString() }
-								if(vmBackupTaskSession && vmBackupTaskSession.getAt("Reason")) {
-										rtn.data.backupResult.errorOutput = vmBackupTaskSession.getAt("Reason")
+								def taskSessions = JsonUtils.normalize(taskSessionsResponse.data)
+								Map vmBackupTaskSession = (Map) JsonUtils.getList(taskSessions, "backupTaskSessions", "backupTaskSession").find { it.vmUid?.toString() == vmObjRef.toString() }
+								if(vmBackupTaskSession && vmBackupTaskSession.reason) {
+										rtn.data.backupResult.errorOutput = vmBackupTaskSession.reason
 								}
 								doUpdate = true
 							}

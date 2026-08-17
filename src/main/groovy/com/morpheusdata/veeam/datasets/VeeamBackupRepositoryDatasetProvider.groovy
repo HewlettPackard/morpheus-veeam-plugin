@@ -1,5 +1,6 @@
 package com.morpheusdata.veeam.datasets
 
+import com.morpheusdata.veeam.utils.JsonUtils
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.Plugin
 import com.morpheusdata.core.data.DataAndFilter
@@ -100,7 +101,7 @@ class VeeamBackupRepositoryDatasetProvider extends AbstractDatasetProvider<Backu
         if (existingRepositories?.size() > 0) {
             existingRepositories.each { repo ->
                 def repoConfig = repo.getConfigMap()
-                def backupServer = repoConfig?.links?.link?.find { it.type == "BackupServerReference" }?.name
+                def backupServer = JsonUtils.findLink(repoConfig, "BackupServerReference")?.name
                 def repoName = backupServer ? "${repo.name} (Backup Server: ${backupServer})" : repo.name
                 repos << [id: repo.id, name: repoName, code: repo.code, internalId: repo.internalId, value: repo.id]
             }
