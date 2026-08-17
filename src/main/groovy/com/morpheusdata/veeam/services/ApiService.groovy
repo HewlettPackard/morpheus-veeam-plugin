@@ -1078,7 +1078,7 @@ class ApiService {
 			if(opts.startRefDateStr) {
 				queryFilter += ";CreationTime>=\"${opts.startRefDateStr}\""
 			}
-			def query = [type: 'backupJobSession', filter: queryFilter, format: 'entities', sortDesc: 'CreationTime', pageSize: 1 ]
+			def query = [type: 'backupJobSession', filter: queryFilter, format: 'entities', sortDesc: 'CreationTime', pageSize: '1' ]
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers: headers, queryParams: query)
 			HttpApiClient httpApiClient = new HttpApiClient()
 			log.info("getLastBackupResult query: ${query}")
