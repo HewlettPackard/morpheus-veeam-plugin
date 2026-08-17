@@ -4,11 +4,10 @@ import com.morpheusdata.core.Plugin
 import com.morpheusdata.core.util.DateUtility
 import com.morpheusdata.core.util.HttpApiClient
 import com.morpheusdata.model.BackupProvider
+import com.morpheusdata.veeam.utils.JsonUtils
 import com.morpheusdata.veeam.utils.VeeamUtils
 import com.morpheusdata.veeam.utils.VeeamScheduleUtils
-import com.morpheusdata.veeam.utils.XmlUtils
 import groovy.util.logging.Slf4j
-import groovy.xml.StreamingMarkupBuilder
 
 @Slf4j
 class ApiService {
@@ -92,13 +91,23 @@ class ApiService {
 			log.debug("tokenHeaders: ${headers}, authConfig: ${authConfig}")
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers)
 			HttpApiClient httpApiClient = new HttpApiClient()
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, authConfig.username, authConfig.password, requestOpts, 'POST')
-			rtn.success = results?.success && results?.error != true
-			if(rtn.success == true) {
-				rtn.token = results.headers['X-RestSvcSessionId']
-				rtn.sessionId = results.data.SessionId.toString()
-				authConfig.token = rtn.token
-				authConfig.sessionId = rtn.sessionId
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, authConfig.username, authConfig.password, requestOpts, 'POST')
+			if(results?.success && results?.error != true) {
+				def token = results.headers['X-RestSvcSessionId']
+				if(token) {
+					rtn.success = true
+					rtn.token = token
+					rtn.sessionId = JsonUtils.normalizeMap(results.data).sessionId?.toString()
+					authConfig.token = rtn.token
+					authConfig.sessionId = rtn.sessionId
+				} else {
+					// the request was answered by something other than the Enterprise Manager REST API, which
+					// happens when the integration points at the Veeam web console port instead of the API port
+					rtn.msg = 'Veeam did not return a session token, verify the Enterprise Manager REST API url and port'
+					rtn.content = results.content ?: results.data?.toString()
+					rtn.data = results.data
+					rtn.headers = results.headers
+				}
 			} else {
 				rtn.content = results.content ?: results.data?.toString()
 				rtn.data = results.data
@@ -114,7 +123,7 @@ class ApiService {
 		def headers = buildHeaders([:], token)
 		HttpApiClient httpApiClient = new HttpApiClient()
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers)
-		def results = httpApiClient.callXmlApi(url.toString(), "/api/logonSessions/${sessionId}".toString(), null, null, requestOpts, 'DELETE')
+		def results = httpApiClient.callJsonApi(url.toString(), "/api/logonSessions/${sessionId}".toString(), null, null, requestOpts, 'DELETE')
 		log.debug("got: ${results}")
 		rtn.success = results?.success
 		return rtn
@@ -128,12 +137,13 @@ class ApiService {
 			def headers = buildHeaders([:], tokenResults.token)
 			HttpApiClient httpApiClient = new HttpApiClient()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers)
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, requestOpts, 'GET')
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, requestOpts, 'GET')
 			log.debug("Supported API Versions results: ${results}")
 			if(results.success == true) {
-				results.data.SupportedVersions.SupportedVersion.each { supportedVersion ->
+				def response = JsonUtils.normalizeMap(results.data)
+				JsonUtils.getList(response, 'supportedVersions', 'supportedVersion').each { supportedVersion ->
 					log.debug("Veeam support API versions: ${supportedVersion}")
-					def row = XmlUtils.xmlToMap(supportedVersion, true)
+					def row = (supportedVersion instanceof Map) ? new LinkedHashMap(supportedVersion) : [:]
 					row.version = row.name?.replace('v', '')?.replace('_', '.')?.toFloat()
 					rtn.data << row
 				}
@@ -145,8 +155,26 @@ class ApiService {
 		return rtn
 	}
 
-	static getLatestApiVersion(Map authConfig, Map opts=[:]) {
-		def rtn = [success:false, apiVersion: null]
+	/**
+	 * Determine the next page to request from the paging info of a normalized list response.
+	 *
+	 * @param response a normalized list response that may contain a {@code pagingInfo} entry
+	 * @return the next page number, or null when the last page has been reached
+	 */
+	static Integer getNextPage(Object response) {
+		def pagingInfo = JsonUtils.get(response, 'pagingInfo')
+		if(!(pagingInfo instanceof Map)) {
+			return null
+		}
+		def pageNum = pagingInfo.pageNum?.toString()
+		def pagesCount = pagingInfo.pagesCount?.toString()
+		if(pageNum?.isInteger() && pagesCount?.isInteger() && pageNum.toInteger() < pagesCount.toInteger()) {
+			return pageNum.toInteger() + 1
+		}
+		return null
+	}
+
+	static getLatestApiVersion(Map authConfig, Map opts=[:]) {		def rtn = [success:false, apiVersion: null]
 		try {
 			def supportedVersions = listSupportedApiVersions(authConfig, opts)
 			if(supportedVersions.success) {
@@ -178,20 +206,22 @@ class ApiService {
 			while(keepGoing) {
 				HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams:query)
 				HttpApiClient httpApiClient = new HttpApiClient()
-				def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
+				def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
 				// log.debug("List Backup Jobs result: ${results}")
 				if(results.success == true) {
 					//iterate results
-					results.data.Job?.each { job ->
-						def row = XmlUtils.xmlToMap(job, true)
+					def response = JsonUtils.normalize(results.data)
+					JsonUtils.getEntityList(response, 'jobs', 'job').each { job ->
+						def row = new LinkedHashMap((Map) job)
 						row.externalId = row.uid
 						row.scheduleCron = VeeamScheduleUtils.decodeScheduling(job)
 
 						rtn.jobs << row
 					}
 					//paging
-					if(results.data.PagingInfo?.size() > 0 && results.data.PagingInfo['@PageNum']?.toInteger() < results.data.PagingInfo['@PagesCount']?.toInteger()) {
-						query.page = (results.data.PagingInfo['@PageNum']?.toInteger() + 1).toString()
+					def nextPage = getNextPage(response)
+					if(nextPage) {
+						query.page = nextPage.toString()
 						keepGoing = true
 					} else {
 						keepGoing = false
@@ -224,16 +254,18 @@ class ApiService {
 			while(keepGoing) {
 				HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
 				HttpApiClient httpApiClient = new HttpApiClient()
-				def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
+				def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
 				if(results.success == true) {
-					results.data.ManagedServer?.each { managedServer ->
-						def row = XmlUtils.xmlToMap(managedServer, true)
+					def response = JsonUtils.normalize(results.data)
+					JsonUtils.getEntityList(response, 'managedServers', 'managedServer').each { managedServer ->
+						def row = new LinkedHashMap((Map) managedServer)
 						row.externalId = row.uid
 						rtn.managedServers << row
 					}
 					//paging
-					if(results.data.PagingInfo?.size() > 0 && results.data.PagingInfo['@PageNum']?.toInteger() < results.data.PagingInfo['@PagesCount']?.toInteger()) {
-						query.page = (results.data.PagingInfo['@PageNum']?.toInteger() + 1).toString()
+					def nextPage = getNextPage(response)
+					if(nextPage) {
+						query.page = nextPage.toString()
 						keepGoing = true
 					} else {
 						keepGoing = false
@@ -258,25 +290,26 @@ class ApiService {
 			def query = [type: 'HierarchyRoot', filter: "Name==\"${name}\"", format:"Entities", pageSize:'1']
 			HttpApiClient httpApiClient = new HttpApiClient()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, "/api/query", null, null, requestOpts, 'GET')
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, "/api/query", null, null, requestOpts, 'GET')
 			rtn.success = results.success
 			if(rtn.success) {
-				def hRoot = results.data.Entities.HierarchyRoots.HierarchyRoot.getAt(0)
+				def response = JsonUtils.normalizeMap(results.data)
+				def hRoot = JsonUtils.getList(JsonUtils.get(response, 'entities'), 'hierarchyRoots', 'hierarchyRoot').getAt(0)
 				if(hRoot) {
 					rtn.data = [
-							id: hRoot.HierarchyRootId.toString(),
-							uid: hRoot["@UID"].toString(),
-							uniqueId: hRoot.UniqueId.toString(),
-							name: hRoot["@Name"].toString(),
-							hostType: hRoot.HostType.toString(),
+							id: hRoot.hierarchyRootId?.toString(),
+							uid: hRoot.uid?.toString(),
+							uniqueId: hRoot.uniqueId?.toString(),
+							name: hRoot.name?.toString(),
+							hostType: hRoot.hostType?.toString(),
 							links: []
 					]
-					hRoot.Links.Link.each {
+					JsonUtils.getLinks(hRoot).each {
 						rtn.data.links << [
-								name:it["@Name"].toString(),
-								type:it["@Type"].toString(),
-								rel:it["@Rel"].toString(),
-								href: it["@Href"].toString()
+								name:it.name?.toString(),
+								type:it.type?.toString(),
+								rel:it.rel?.toString(),
+								href: it.href?.toString()
 						]
 					}
 				}
@@ -304,17 +337,19 @@ class ApiService {
 			while(keepGoing) {
 				HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
 				HttpApiClient httpApiClient = new HttpApiClient()
-				def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
+				def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
 				if(results.success == true) {
 					//iterate results
-					results.data.BackupServer?.each { backupServer ->
-						def row = XmlUtils.xmlToMap(backupServer, true)
+					def response = JsonUtils.normalize(results.data)
+					JsonUtils.getEntityList(response, 'backupServers', 'backupServer').each { backupServer ->
+						def row = new LinkedHashMap((Map) backupServer)
 						row.externalId = row.uid
 						rtn.backupServers << row
 					}
 					//paging
-					if(results.data.PagingInfo?.size() > 0 && results.data.PagingInfo['@PageNum']?.toInteger() < results.data.PagingInfo['@PagesCount']?.toInteger()) {
-						query.page = (results.data.PagingInfo['@PageNum']?.toInteger() + 1).toString()
+					def nextPage = getNextPage(response)
+					if(nextPage) {
+						query.page = nextPage.toString()
 						keepGoing = true
 					} else {
 						keepGoing = false
@@ -341,10 +376,10 @@ class ApiService {
 			def query = [format:'Entity']
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
 			HttpApiClient httpApiClient = new HttpApiClient()
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
 			if(results.success == true) {
 				rtn.data = results.data
-				rtn.job = XmlUtils.xmlToMap(results.data, true)
+				rtn.job = JsonUtils.normalizeMap(results.data)
 				rtn.success = true
 			}
 		} else {
@@ -368,17 +403,19 @@ class ApiService {
 			while(keepGoing) {
 				HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
 				HttpApiClient httpApiClient = new HttpApiClient()
-				def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
+				def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
 				if(results.success == true) {
 					//iterate results
-					results.data.Repository?.each { repository ->
-						def row = XmlUtils.xmlToMap(repository, true)
+					def response = JsonUtils.normalize(results.data)
+					JsonUtils.getEntityList(response, 'repositories', 'repository').each { repository ->
+						def row = new LinkedHashMap((Map) repository)
 						row.externalId = row.uid
 						rtn.repositories << row
 					}
 					//paging
-					if(results.data.PagingInfo?.size() > 0 && results.data.PagingInfo['@PageNum']?.toInteger() < results.data.PagingInfo['@PagesCount']?.toInteger()) {
-						query.page = (results.data.PagingInfo['@PageNum']?.toInteger() + 1).toString()
+					def nextPage = getNextPage(response)
+					if(nextPage) {
+						query.page = nextPage.toString()
 						keepGoing = true
 					} else {
 						keepGoing = false
@@ -403,16 +440,16 @@ class ApiService {
 		def query = [format: "Entity"]
 		HttpApiClient httpApiClient = new HttpApiClient()
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-		def results = httpApiClient.callXmlApi(url, "/api/jobs/${backupJobId}", null, null, requestOpts, 'GET')
+		def results = httpApiClient.callJsonApi(url, "/api/jobs/${backupJobId}", null, null, requestOpts, 'GET')
 		rtn.results = results
 		log.debug("got: ${results}")
 		rtn.success = results?.success
 		if(results.success) {
-			def job = results.data
-			def name = job['@Name'].toString()
+			def job = JsonUtils.normalizeMap(results.data)
 			rtn.jobId = backupJobId
-			rtn.jobName = name
-			rtn.scheduleEnabled = job.ScheduleEnabled.toString()
+			rtn.jobName = job.name?.toString()
+			rtn.scheduleEnabled = job.scheduleEnabled?.toString()
+			rtn.scheduleConfigured = job.scheduleConfigured?.toString()
 			rtn.scheduleCron = VeeamScheduleUtils.decodeScheduling(job)
 		} else {
 			rtn.content = results.content ?: results.data?.toString()
@@ -462,11 +499,12 @@ class ApiService {
 		def query = [format:'Entity']
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
 		HttpApiClient httpApiClient = new HttpApiClient()
-		def results = httpApiClient.callXmlApi(url, "/api/jobs/${backupJobId}/includes", null, null, requestOpts, 'GET')
-		rtn.taskId = results.data.taskId
+		def results = httpApiClient.callJsonApi(url, "/api/jobs/${backupJobId}/includes", null, null, requestOpts, 'GET')
+		def response = JsonUtils.normalize(results.data)
+		rtn.taskId = JsonUtils.get(response, 'taskId')
 		rtn.data = []
-		results.data.ObjectInJob.each { vmInJob ->
-			rtn.data << [objectId: vmInJob.ObjectInJobId, objectRef: vmInJob.HierarchyObjRef, name: vmInJob.Name]
+		JsonUtils.getEntityList(response, 'objectInJobs', 'objectInJob').each { vmInJob ->
+			rtn.data << [objectId: vmInJob.objectInJobId, objectRef: vmInJob.hierarchyObjRef, name: vmInJob.name]
 		}
 		rtn.success = results?.success
 		return rtn
@@ -484,22 +522,21 @@ class ApiService {
 			def query = [action:'clone']
 			def jobName = opts.jobName
 			def repositoryId = opts.repositoryId
-			def requestXml = new StreamingMarkupBuilder().bind() {
-				JobCloneSpec("xmlns":"http://www.veeam.com/ent/v1.0", "xmlns:xsd":"http://www.w3.org/2001/XMLSchema", "xmlns:xsi":"http://www.w3.org/2001/XMLSchema-instance") {
-					"BackupJobCloneInfo"() {
-						"JobName"(jobName)
-						"RepositoryUid"(repositoryId)
-					}
-				}
-			}
-			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query, body:requestXml.toString())
+			// request bodies remain PascalCase, only the response representation changed casing in Veeam 13
+			def requestBody = [
+				BackupJobCloneInfo: [
+					JobName: jobName,
+					RepositoryUid: repositoryId
+				]
+			]
+			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query, body:requestBody)
 			HttpApiClient httpApiClient = new HttpApiClient()
 			log.debug("requestOpts: ${requestOpts}")
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
 			log.debug("clone results: ${results}")
 			if(results.success == true) {
 				rtn.data = results.data
-				def taskId = results.data?.TaskId.toString()
+				def taskId = JsonUtils.getValue(results.data, 'TaskId')?.toString()
 				if(taskId) {
 					def taskResults = waitForTask(authConfig, taskId)
 					log.debug("taskResults: ${taskResults}")
@@ -510,7 +547,7 @@ class ApiService {
 						if(jobLink) {
 							rtn.jobId = VeeamUtils.parseEntityId(jobLink.href)
 							clonedJobInfo = getBackupJobJson(authConfig.apiUrl, tokenResults.token, rtn.jobId)?.data
-							rtn.scheduleCron = clonedJobInfo.scheduleCron
+							rtn.scheduleCron = VeeamScheduleUtils.decodeScheduling(JsonUtils.normalizeMap(clonedJobInfo))
 							rtn.success = true
 						} else {
 							rtn.msg = taskResults.msg
@@ -518,14 +555,15 @@ class ApiService {
 						}
 
 						// copy retention info to the new job (not done by the job clone API)
-						if(sourceJob.jobInfo && clonedJobInfo) {
-							def updateJobConfig = clonedJobInfo
-							updateJobConfig.jobInfo.SimpleRetentionPolicy = sourceJob.jobInfo.SimpleRetentionPolicy
-							updateBackupJob(authConfig.apiUrl, tokenResults.token, updateJobConfig)
+						def sourceJobInfo = JsonUtils.getValue(sourceJob, 'JobInfo')
+						def clonedJobInfoDetail = JsonUtils.getValue(clonedJobInfo, 'JobInfo')
+						if(sourceJobInfo && clonedJobInfoDetail) {
+							JsonUtils.setValue(clonedJobInfoDetail, 'SimpleRetentionPolicy', JsonUtils.getValue(sourceJobInfo, 'SimpleRetentionPolicy'))
+							updateBackupJob(authConfig.apiUrl, tokenResults.token, rtn.jobId, clonedJobInfo)
 						}
-						
+
 						// ensure the job is enabled if the source job was enabled
-						if(sourceJob.scheduleEnabled == "true" && rtn.jobId) {
+						if(JsonUtils.getValue(sourceJob, 'ScheduleEnabled')?.toString() == "true" && rtn.jobId) {
 							// The only way I found to ensure a job is enabled after cloning is to first
 							// disable it and then enable it.
 							def disableScheduleResults = disableBackupJobSchedule(authConfig.apiUrl, tokenResults.token, rtn.jobId)
@@ -619,34 +657,34 @@ class ApiService {
 			HttpApiClient httpApiClient = new HttpApiClient()
 
 			//load up the existing job
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
 			log.info("job results: ${results}")
 			if(results.success == true) {
 				//save off the existing
 				def existingItems = []
 				def processingOpts
-				results.data.ObjectInJob.each { vmInJob ->
-					if(vmInJob.ObjectInJobId) {
-						existingItems << vmInJob.ObjectInJobId.toString()
+				def response = JsonUtils.normalize(results.data)
+				JsonUtils.getEntityList(response, 'objectInJobs', 'objectInJob').each { vmInJob ->
+					if(vmInJob.objectInJobId) {
+						existingItems << vmInJob.objectInJobId.toString()
 						if(processingOpts == null)
-							processingOpts = vmInJob.GuestProcessingOptions
+							processingOpts = vmInJob.guestProcessingOptions
 					}
 				}
 				//add new
-				def requestXml = new StreamingMarkupBuilder().bind {
-					CreateObjectInJobSpec('xmlns':'http://www.veeam.com/ent/v1.0', 'xmlns:xsd':'http://www.w3.org/2001/XMLSchema', 'xmlns:xsi':'http://www.w3.org/2001/XMLSchema-instance') {
-						'HierarchyObjRef'(vmId)
-						'HierarchyObjName'(vmName)
-					}
-				}
+				// request bodies remain PascalCase, only the response representation changed casing in Veeam 13
+				def requestBody = [
+					HierarchyObjRef: vmId,
+					HierarchyObjName: vmName
+				]
 				//add it
 				log.debug("requestOpts: ${requestOpts}")
-				requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query, body: requestXml.toString())
-				def addResults = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
+				requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query, body: requestBody)
+				def addResults = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
 				log.debug("addResults: ${addResults}")
 				if(addResults.success == true) {
 					//get task id and wait
-					def taskId = addResults.data?.TaskId.toString()
+					def taskId = JsonUtils.getValue(addResults.data, 'TaskId')?.toString()
 					log.debug("taskId: ${taskId}")
 					if(taskId) {
 						def taskResults = waitForTask(authConfig, taskId)
@@ -659,8 +697,8 @@ class ApiService {
 								requestOpts = new HttpApiClient.RequestOptions(headers:headers)
 								existingItems.each { existingId ->
 									def itemPath = apiPath + '/' + existingId
-									def deleteResults = httpApiClient.callXmlApi(authConfig.apiUrl, itemPath, null, null, requestOpts, 'DELETE')
-									def deleteTaskId = deleteResults.data?.TaskId?.toString()
+									def deleteResults = httpApiClient.callJsonApi(authConfig.apiUrl, itemPath, null, null, requestOpts, 'DELETE')
+									def deleteTaskId = JsonUtils.getValue(deleteResults.data, 'TaskId')?.toString()
 									if(deleteTaskId) {
 										def deleteTaskResults = waitForTask(authConfig, deleteTaskId)
 										log.debug("deleteResults: ${deleteResults}")
@@ -674,25 +712,14 @@ class ApiService {
 							while(!jobObject && jobDetailAttempts < maxJobDetailAttempts) {
 								def jobResults = loadBackupJob(authConfig, jobId, opts)
 								if(jobResults.success == true) {
-									if(jobResults.job.jobInfo?.backupJobInfo?.includes?.objectInJob instanceof Map) {
-										log.debug("ONLY FOUND ONE OBJECT IN JOB")
-										def tmpJobObj = jobResults.job.jobInfo?.backupJobInfo?.includes?.objectInJob
+									def includes = JsonUtils.get(jobResults.job, 'jobInfo', 'backupJobInfo', 'includes')
+									jobObject = JsonUtils.getList(includes, 'objectInJobs', 'objectInJob').find {
 										if(opts.externalId) {
-											def jobObjMor = VeeamUtils.extractVmIdFromObjectRef(tmpJobObj.hierarchyObjRef)
-											def jobObjUid = VeeamUtils.extractVeeamUuid(tmpJobObj.hierarchyObjRef)
-											if(opts.externalId == jobObjMor || opts.externalId.contains(jobObjUid)) {
-												jobObject = tmpJobObj
-											}
-										}
-									} else {
-										log.debug("FOUND MULTIPLE JOB OBJECTS, FIND THE RIGHT ONE")
-										jobObject = jobResults.job.jobInfo?.backupJobInfo?.includes?.objectInJob?.find {
-											if(opts.externalId) {
-												def itMor = VeeamUtils.extractVmIdFromObjectRef(it.hierarchyObjRef)
-												return opts.externalId == itMor
-											} else {
-												return vmName == it.name
-											}
+											def itMor = VeeamUtils.extractVmIdFromObjectRef(it.hierarchyObjRef?.toString())
+											def itUid = VeeamUtils.extractVeeamUuid(it.hierarchyObjRef?.toString())
+											return opts.externalId == itMor || opts.externalId.contains(itUid)
+										} else {
+											return vmName == it.name
 										}
 									}
 									if(rtn.backupId == null && jobObject) {
@@ -745,13 +772,12 @@ class ApiService {
 			def query = [action:'start']
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
 			HttpApiClient httpApiClient = new HttpApiClient()
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
 			log.debug("veeam backup start request got: ${results}")
 			def jobStartDate = results.headers?.Date
 			rtn.success = results?.success
 			if (results?.success == true) {
-				def response = XmlUtils.xmlToMap(results.data, true)
-				taskId = response.taskId
+				taskId = JsonUtils.normalizeMap(results.data).taskId
 			}
 			if (taskId) {
 				def taskResults = waitForTask(authConfig, taskId, ['Finished'])
@@ -772,8 +798,7 @@ class ApiService {
 					}
 				} else{
 					rtn.success = false
-					def resultData = XmlUtils.xmlToMap(taskResults.data, true)
-					rtn.errorMsg = resultData.result.message
+					rtn.errorMsg = getTaskErrorMessage(taskResults)
 				}
 			}
 		}
@@ -787,12 +812,11 @@ class ApiService {
 		def query = [action:'stop']
 		HttpApiClient httpApiClient = new HttpApiClient()
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-		def results = httpApiClient.callXmlApi(url, "/api/jobs/${backupJobId}", null, null, requestOpts, 'POST')
+		def results = httpApiClient.callJsonApi(url, "/api/jobs/${backupJobId}", null, null, requestOpts, 'POST')
 		log.debug("got: ${results}")
 		rtn.success = results?.success
 		if(results?.success == true) {
-			def response = results.data
-			rtn.taskId = response.TaskId.toString()
+			rtn.taskId = JsonUtils.getValue(results.data, 'TaskId')?.toString()
 		} else if(results?.errorCode?.toString() == "404") {
 			rtn.success = true
 		}
@@ -808,21 +832,16 @@ class ApiService {
 			def apiPath = authConfig.basePath + "/backupServers/${backupServerId}"
 			def headers = buildHeaders([:], tokenResults.token)
 			def query = [action:'quickbackup']
-			def bodyXml = new StreamingMarkupBuilder().bind() {
-				QuickBackupStartupSpec("xmlns":"http://www.veeam.com/ent/v1.0", "xmlns:xsd":"http://www.w3.org/2001/XMLSchema", "xmlns:xsi":"http://www.w3.org/2001/XMLSchema-instance") {
-					VmRef(vmId)
-				}
-			}
-			def body = bodyXml.toString()
+			// request bodies remain PascalCase, only the response representation changed casing in Veeam 13
+			def body = [VmRef: vmId]
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query, body: body)
 			HttpApiClient httpApiClient = new HttpApiClient()
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
 			log.debug("veeam quick backup start request got: ${results}")
-			def backupStartDate = results.headers.Date
+			def backupStartDate = results.headers?.Date
 			rtn.success = results?.success
 			if (results?.success == true) {
-				def response = XmlUtils.xmlToMap(results.data, true)
-				taskId = response.taskId
+				taskId = JsonUtils.normalizeMap(results.data).taskId
 			}
 			if (taskId) {
 				def taskResults = waitForTask(authConfig, taskId, ['Finished'])
@@ -842,8 +861,7 @@ class ApiService {
 				} else{
 					rtn.success = false
 					rtn.status = "FAILED"
-					def resultData = XmlUtils.xmlToMap(taskResults.data, true)
-					rtn.errorMsg = resultData.result.message
+					rtn.errorMsg = getTaskErrorMessage(taskResults)
 				}
 			}
 		}
@@ -859,28 +877,26 @@ class ApiService {
 			def apiPath = authConfig.basePath + "/backupServers/${backupServerId}"
 			def headers = buildHeaders([:], tokenResults.token)
 			def query = [action:'veeamzip']
-			def bodyXml = new StreamingMarkupBuilder().bind() {
-				VeeamZipStartupSpec("xmlns":"http://www.veeam.com/ent/v1.0", "xmlns:xsd":"http://www.w3.org/2001/XMLSchema", "xmlns:xsi":"http://www.w3.org/2001/XMLSchema-instance") {
-					VmRef(vmId)
-					RepositoryUid(repositoryId)
-					BackupRetention("Never")
-					Compressionlevel(3)
-					if(opts.vmwToolsInstalled) {
-						// doesn't work well with vmware tools quiescensce
-						DisableGuestQuiescence(true)
-					}
-				}
+			// request bodies remain PascalCase, only the response representation changed casing in Veeam 13
+			def body = [
+				VmRef: vmId,
+				RepositoryUid: repositoryId,
+				BackupRetention: "Never",
+				CompressionLevel: 3
+			]
+			if(opts.vmwToolsInstalled) {
+				// doesn't work well with vmware tools quiescensce
+				body.DisableGuestQuiescence = true
 			}
-			def body = bodyXml.toString()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query, body: body)
 			HttpApiClient httpApiClient = new HttpApiClient()
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'POST')
 			log.debug("veeamzip backup start request got: ${results}")
 			def backupStartDate = results.headers?.Date
 			log.debug("backupStartDate: ${backupStartDate}")
 			rtn.success = results?.success
 			if (results?.success == true) {
-				taskId = results.data.TaskId.toString()
+				taskId = JsonUtils.normalizeMap(results.data).taskId
 			}
 			log.debug("taskId: $taskId")
 			if (taskId) {
@@ -902,8 +918,7 @@ class ApiService {
 				} else{
 					rtn.success = false
 					rtn.status = "FAILED"
-					def resultData = XmlUtils.xmlToMap(taskResults.data, true)
-					rtn.errorMsg = resultData.result.message
+					rtn.errorMsg = getTaskErrorMessage(taskResults)
 				}
 			}
 		}
@@ -918,12 +933,11 @@ class ApiService {
 			def headers = buildHeaders([:], token)
 			HttpApiClient httpApiClient = new HttpApiClient()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers)
-			def results = httpApiClient.callXmlApi(url, "/api/jobs/${backupJobId}", null, null, requestOpts, 'DELETE')
+			def results = httpApiClient.callJsonApi(url, "/api/jobs/${backupJobId}", null, null, requestOpts, 'DELETE')
 			log.debug("got: ${results}")
 			rtn.success = results?.success
 			if(results?.success == true) {
-				def response = results.data
-				rtn.data.taskId = response.TaskId.toString()
+				rtn.data.taskId = JsonUtils.getValue(results.data, 'TaskId')?.toString()
 			} else if(results.errorCode?.toString() == "400") {
 				rtn.success = true
 			}
@@ -937,30 +951,33 @@ class ApiService {
 	//turn off backup schedule
 	static disableBackupJobSchedule(url, token, backupJobId){
 		def rtn = [success:false]
-		def taskId = ""
 		def backupJob = getBackupJob(url, token, backupJobId)
-		if(backupJob.scheduleEnabled == "false" && backupJob.ScheduleConfigured == "false"){
+		if(backupJob.scheduleEnabled == "false" && backupJob.scheduleConfigured == "false"){
 			//schedule is already off
 			rtn.success = true
 			return rtn
 		}
 
-		def bodyXmlBuilder = backupJob.results.data
-		bodyXmlBuilder.ScheduleConfigured = "false"
-		bodyXmlBuilder.ScheduleEnabled = "false"
-		bodyXmlBuilder.jobScheduleOptions = ""
+		// the job entity is fetched and sent back with the schedule turned off, so the document is modified in
+		// place rather than normalized to preserve the property casing Veeam expects on the request body
+		def body = backupJob.results?.data
+		if(!(body instanceof Map)) {
+			rtn.msg = "Unable to load backup job ${backupJobId}"
+			return rtn
+		}
+		JsonUtils.setValue(body, 'ScheduleConfigured', false)
+		JsonUtils.setValue(body, 'ScheduleEnabled', false)
+		JsonUtils.setValue(body, 'JobScheduleOptions', [:])
 
 		def headers = buildHeaders([:], token)
 		def query = [format: "Entity"]
-		def body = new StreamingMarkupBuilder().bindNode(bodyXmlBuilder).toString()
 		HttpApiClient httpApiClient = new HttpApiClient()
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query, body: body)
-		def results = httpApiClient.callXmlApi(url, "/api/jobs/${backupJobId}", null, null, requestOpts, 'PUT')
+		def results = httpApiClient.callJsonApi(url, "/api/jobs/${backupJobId}", null, null, requestOpts, 'PUT')
 		log.debug("disableBackupJobSchedule got: ${results}")
 		rtn.success = results?.success
 		if(results?.success == true) {
-			def response = results.data
-			rtn.taskId = response.TaskId.toString()
+			rtn.taskId = JsonUtils.getValue(results.data, 'TaskId')?.toString()
 		}
 		return rtn
 	}
@@ -972,8 +989,8 @@ class ApiService {
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
 		HttpApiClient httpApiClient = new HttpApiClient()
 		def apiPath = '/api/jobs/' + backupJobId + '/includes/' + vmId
-		def results = httpApiClient.callXmlApi(url, apiPath, null, null, requestOpts, 'DELETE')
-		rtn.taskId = results.data?.TaskId.toString()
+		def results = httpApiClient.callJsonApi(url, apiPath, null, null, requestOpts, 'DELETE')
+		rtn.taskId = JsonUtils.getValue(results.data, 'TaskId')?.toString()
 		rtn.success = results?.success
 		rtn.data = results.data
 		log.debug "remove vm results ${results}"
@@ -991,15 +1008,16 @@ class ApiService {
 		log.debug("getBackupResult got: ${results}")
 		rtn.success = results?.success
 		if(results?.success == true) {
+			def session = JsonUtils.normalizeMap(results.data)
 			backupResult = [
 				backupSessionId: backupSessionId,
-				backupJobName: (results.data?.jobName ?: results.data?.JobName)?.toString(),
-				startTime: (results.data?.creationTimeUTC ?: results.data?.CreationTimeUTC)?.toString(),
-				endTime: (results.data?.endTimeUTC ?: results.data?.EndTimeUTC)?.toString(),
-				state: (results.data?.state ?: results.data?.State)?.toString(),
-				result: (results.data?.result ?: results.data?.Result)?.toString(),
-				progress: (results.data?.progress ?: results.data?.Progress)?.toString(),
-				links: results.data?.links ?: results.data?.Links
+				backupJobName: session.jobName?.toString(),
+				startTime: session.creationTimeUTC?.toString(),
+				endTime: session.endTimeUTC?.toString(),
+				state: session.state?.toString(),
+				result: session.result?.toString(),
+				progress: session.progress?.toString(),
+				links: JsonUtils.getLinks(session)
 			]
 			log.debug("getBackupResult Links: ${backupResult.links}")
 			if(backupResult.result == "Success" || backupResult.result == "Warning"){
@@ -1019,22 +1037,21 @@ class ApiService {
 		def query = [type:'backupJobSession', filter:"jobUid==\"${backupJobUid}\"", format:'entities']
 		HttpApiClient httpApiClient = new HttpApiClient()
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-		def results = httpApiClient.callXmlApi(url, "/api/query", null, null, requestOpts, 'GET')
+		def results = httpApiClient.callJsonApi(url, "/api/query", null, null, requestOpts, 'GET')
 		log.debug("got: ${results}")
 		rtn.success = results?.success
 		if(results?.success == true) {
-			def response = results.data
-			response.Entities.BackupJobSessions.BackupJobSession.each { backupJobSession ->
-				def uid = backupJobSession.JobUid.toString()
-
-				def backupJobSessionUid = backupJobSession['@UID'].toString()
+			def response = JsonUtils.normalize(results.data)
+			def entities = JsonUtils.get(response, 'entities')
+			JsonUtils.getList(entities, 'backupJobSessions', 'backupJobSession').each { backupJobSession ->
+				def backupJobSessionUid = backupJobSession.uid.toString()
 				def backupJobSessionId = backupJobSessionUid.substring(backupJobSessionUid.lastIndexOf(":")+1)
-				def jobName = backupJobSession.JobName.toString()
-				def startTime = backupJobSession.CreationTimeUTC.toString()
-				def endTime = backupJobSession.EndTimeUTC.toString()
-				def state = backupJobSession.State.toString()
-				def result = backupJobSession.Result.toString()
-				def progress = backupJobSession.Progress.toString()
+				def jobName = backupJobSession.jobName?.toString()
+				def startTime = backupJobSession.creationTimeUTC?.toString()
+				def endTime = backupJobSession.endTimeUTC?.toString()
+				def state = backupJobSession.state?.toString()
+				def result = backupJobSession.result?.toString()
+				def progress = backupJobSession.progress?.toString()
 				def backupResult = [backupSessionId: backupJobSessionId, backupJobName: jobName, startTime: startTime, endTime: endTime, state: state, result: result, progress: progress]
 				if(result == "Success" || result == "Warning"){
 					def stats = getBackupResultStats(url, token, backupJobSessionId)
@@ -1067,15 +1084,17 @@ class ApiService {
 			log.info("getLastBackupResult query: ${query}")
 			def attempt = 0
 			def keepGoing = true
-			def response
+			def backupJobSession
 			while(keepGoing == true && attempt < maxTaskAttempts) {
-				def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
+				def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
 				rtn.success = results?.success
 				if(rtn.success == true) {
-					response = XmlUtils.xmlToMap(results.data, true)
-					if(response.entities.backupJobSessions?.size() > 0) {
-						def tmpJobSession = response.entities.backupJobSessions.backupJobSession
-						def tmpJobSessionUid = tmpJobSession.uid
+					def response = JsonUtils.normalize(results.data)
+					def entities = JsonUtils.get(response, 'entities')
+					def tmpJobSession = JsonUtils.getList(entities, 'backupJobSessions', 'backupJobSession')?.getAt(0)
+					if(tmpJobSession) {
+						backupJobSession = tmpJobSession
+						def tmpJobSessionUid = tmpJobSession.uid.toString()
 						def tmpBackupSessionId = tmpJobSessionUid.substring(tmpJobSessionUid.lastIndexOf(":")+1)
 						if(!opts.lastBackupSessionId || tmpBackupSessionId != opts.lastBackupSessionId) {
 							keepGoing = false
@@ -1090,16 +1109,15 @@ class ApiService {
 				attempt++
 			}
 
-			if(response.entities?.backupJobSessions?.size() > 0) {
-				def backupJobSession = response.entities.backupJobSessions.backupJobSession
-				def backupJobSessionUid = backupJobSession.uid
+			if(backupJobSession) {
+				def backupJobSessionUid = backupJobSession.uid.toString()
 				def backupJobSessionId = backupJobSessionUid.substring(backupJobSessionUid.lastIndexOf(":") + 1)
-				def jobName = backupJobSession.jobName.toString()
-				def startTime = backupJobSession.creationTimeUTC.toString()
-				def endTime = backupJobSession.endTimeUTC.toString()
-				def state = backupJobSession.state.toString()
-				def result = backupJobSession.result.toString()
-				def progress = backupJobSession.progress.toString()
+				def jobName = backupJobSession.jobName?.toString()
+				def startTime = backupJobSession.creationTimeUTC?.toString()
+				def endTime = backupJobSession.endTimeUTC?.toString()
+				def state = backupJobSession.state?.toString()
+				def result = backupJobSession.result?.toString()
+				def progress = backupJobSession.progress?.toString()
 				backupResult = [backupSessionId: backupJobSessionId, backupJobName: jobName, startTime: startTime, endTime: endTime, state: state, result: result, progress: progress]
 			}
 			rtn.backupResult = backupResult
@@ -1128,7 +1146,8 @@ class ApiService {
 			def query = [format: "Entity"]
 			HttpApiClient httpApiClient = new HttpApiClient()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-			rtn = httpApiClient.callXmlApi(authConfig.apiUrl, "/api/backupSessions/${backupSessionId}", requestOpts, 'GET')
+			rtn = httpApiClient.callJsonApi(authConfig.apiUrl, "/api/backupSessions/${backupSessionId}", requestOpts, 'GET')
+			rtn.data = JsonUtils.normalize(rtn.data)
 		}
 		return rtn
 	}
@@ -1152,12 +1171,13 @@ class ApiService {
 			while(keepGoing == true && attempt < maxTaskAttempts) {
 				HttpApiClient httpApiClient = new HttpApiClient()
 				HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-				def restorePointsResults = httpApiClient.callXmlApi(authConfig.apiUrl, "/api/query", null, null, requestOpts, 'GET')
+				def restorePointsResults = httpApiClient.callJsonApi(authConfig.apiUrl, "/api/query", null, null, requestOpts, 'GET')
 				if(restorePointsResults.success) {
-					def restorePointsResponse = restorePointsResults.data
-					def restoreRef = restorePointsResponse.Entities.VmRestorePoints.VmRestorePoint.getAt(0)
+					def restorePointsResponse = JsonUtils.normalize(restorePointsResults.data)
+					def entities = JsonUtils.get(restorePointsResponse, 'entities')
+					def restoreRef = JsonUtils.getList(entities, 'vmRestorePoints', 'vmRestorePoint')?.getAt(0)
 					if(restoreRef) {
-						rtn.data.externalId = restoreRef["@UID"].toString()
+						rtn.data.externalId = restoreRef.uid?.toString()
 						rtn.success = true
 						keepGoing = false
 					}
@@ -1182,7 +1202,8 @@ class ApiService {
 			def query = [format: "Entity"]
 			HttpApiClient httpApiClient = new HttpApiClient()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-			rtn = httpApiClient.callXmlApi(authConfig.apiUrl, "/api/restorePoints/${restorePointId}/vmRestorePoints", requestOpts, 'GET')
+			rtn = httpApiClient.callJsonApi(authConfig.apiUrl, "/api/restorePoints/${restorePointId}/vmRestorePoints", requestOpts, 'GET')
+			rtn.data = JsonUtils.normalize(rtn.data)
 		}
 		return rtn
 	}
@@ -1196,7 +1217,8 @@ class ApiService {
 			def query = [format: "Entity"]
 			HttpApiClient httpApiClient = new HttpApiClient()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-			rtn = httpApiClient.callXmlApi(authConfig.apiUrl, "/api/vmRestorePoints/${restorePointId}", requestOpts, 'GET')
+			rtn = httpApiClient.callJsonApi(authConfig.apiUrl, "/api/vmRestorePoints/${restorePointId}", requestOpts, 'GET')
+			rtn.data = JsonUtils.normalize(rtn.data)
 		}
 		return rtn
 	}
@@ -1209,18 +1231,18 @@ class ApiService {
 		def query = [format: "Entity"]
 		HttpApiClient httpApiClient = new HttpApiClient()
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-		def results = httpApiClient.callXmlApi(url, "/api/restoreSessions/${restoreSessionId}", requestOpts, 'GET')
+		def results = httpApiClient.callJsonApi(url, "/api/restoreSessions/${restoreSessionId}", requestOpts, 'GET')
 		log.debug("getRestoreResult results: ${results}")
 		rtn.success = results?.success
 		if(results?.success == true) {
-			def response = results.data
-			def startTime = response.CreationTimeUTC.toString()
-			def endTime = response.EndTimeUTC?.toString()
-			def state = response.State.toString()
-			def result = response.Result.toString()
-			def progress = response.Progress.toString()
+			def response = JsonUtils.normalizeMap(results.data)
+			def startTime = response.creationTimeUTC?.toString()
+			def endTime = response.endTimeUTC?.toString()
+			def state = response.state?.toString()
+			def result = response.result?.toString()
+			def progress = response.progress?.toString()
 			def vmId
-			def vmRef = response.RestoredObjRef.toString()
+			def vmRef = response.restoredObjRef?.toString() ?: ''
 			if(vmRef && vmRef != ""){
 				vmId = vmRef?.substring(vmRef?.lastIndexOf(".")+1)
 			}
@@ -1238,21 +1260,20 @@ class ApiService {
 		def query = [format: "Entity"]
 		HttpApiClient httpApiClient = new HttpApiClient()
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-		def results = httpApiClient.callXmlApi(url, "/api/backupSessions/${backupJobSessionId}/taskSessions", null, null, requestOpts, 'GET')
+		def results = httpApiClient.callJsonApi(url, "/api/backupSessions/${backupJobSessionId}/taskSessions", null, null, requestOpts, 'GET')
 		log.debug("got: ${results}")
 		rtn.success = results?.success
 		if(rtn.success == true) {
-			def totalSize = 0
-			def response = results.data
-			response.BackupTaskSession.each { backupTaskSession ->
-				rtn.totalSize += backupTaskSession.TotalSize.toLong()
+			def response = JsonUtils.normalize(results.data)
+			JsonUtils.getList(response, 'backupTaskSessions', 'backupTaskSession').each { backupTaskSession ->
+				rtn.totalSize += (JsonUtils.toLong(backupTaskSession.totalSize) ?: 0l)
 			}
 		}
 		return rtn
 	}
 
 	// this should just take a restore point or a restore endpoint URL, finding the restore info can go in the restore execution service
-	static restoreVM(String url, String token, String restorePath, String restoreSpec, opts=[:]) {
+	static restoreVM(String url, String token, String restorePath, Map restoreSpec, opts=[:]) {
 		log.debug("restoreVM: ${url}, ${restorePath}, ${restoreSpec} ${opts}")
 		def rtn = [success:false]
 		def headers = buildHeaders([:], token)
@@ -1267,12 +1288,11 @@ class ApiService {
 			def restoreQuery = query + [action: 'restore']
 			HttpApiClient httpApiClient = new HttpApiClient()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams:restoreQuery, body: body)
-			def results = httpApiClient.callXmlApi(url, restorePath, requestOpts, 'POST')
+			def results = httpApiClient.callJsonApi(url, restorePath, requestOpts, 'POST')
 			rtn.success = results?.success
 			if(rtn.success == true) {
-				def response = results.data
 				//get the restore session id
-				restoreTaskId = response.TaskId
+				restoreTaskId = JsonUtils.getValue(results.data, 'TaskId')
 			}
 		} else if(!rtn.msg) {
 			log.debug("Unable to perform restore, no restore link found.")
@@ -1323,12 +1343,13 @@ class ApiService {
 			def query = [host: hierarchyRoot, name: vmName, type: 'Vm']
 			HttpApiClient httpApiClient = new HttpApiClient()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-			def results = httpApiClient.callXmlApi(url, "/api/lookup", null, null, requestOpts, 'GET')
+			def results = httpApiClient.callJsonApi(url, "/api/lookup", null, null, requestOpts, 'GET')
 			log.debug("got vmbyid results: ${results}")
 			rtn.success = results?.success
 			if(rtn.success == true) {
-				def response = results.data
-				vmId = response.HierarchyItem.ObjectRef.toString()
+				def response = JsonUtils.normalize(results.data)
+				def hierarchyItem = JsonUtils.getList(response, 'hierarchyItems', 'hierarchyItem')?.getAt(0)
+				vmId = hierarchyItem?.objectRef?.toString()
 				rtn.vmId = vmId
 			}
 		}
@@ -1353,13 +1374,14 @@ class ApiService {
 		log.debug("getVmId query: ${query}")
 		HttpApiClient httpApiClient = new HttpApiClient()
 		HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-		def results = httpApiClient.callXmlApi(url, "/api/lookup", requestOpts, 'GET')
+		def results = httpApiClient.callJsonApi(url, "/api/lookup", requestOpts, 'GET')
 		log.debug("getVmId results: ${results}")
 		rtn.success = results?.success
 		if(rtn.success == true) {
-			def response = results.data
-			rtn.vmId = results.data.HierarchyItem.ObjectRef.toString()
-			rtn.vmName = results.data.HierarchyItem.ObjectName.toString()
+			def response = JsonUtils.normalize(results.data)
+			def hierarchyItem = JsonUtils.getList(response, 'hierarchyItems', 'hierarchyItem')?.getAt(0)
+			rtn.vmId = hierarchyItem?.objectRef?.toString()
+			rtn.vmName = hierarchyItem?.objectName?.toString()
 		}
 		return rtn
 	}
@@ -1400,27 +1422,28 @@ class ApiService {
 		def keepGoing = true
 		while(keepGoing == true && attempt < maxTaskAttempts) {
 			//load the task
-			def results = httpApiClient.callXmlApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
+			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, null, null, requestOpts, 'GET')
 			//check results
 			if(results?.success == true) {
-				def taskState = results.data.State.text()
+				def taskData = JsonUtils.normalizeMap(results.data)
+				def taskState = taskData.state?.toString()
 				if(waitForState.contains(taskState)) {
 					rtn.success = true
-					rtn.data = results.data
+					rtn.data = taskData
 					rtn.state = taskState
 					keepGoing = false
 					//parse results
-					def taskSuccess = results.data.Result['@Success']
-					if(taskSuccess == 'true') {
-						results.data.Links?.Link?.each { link ->
-							def linkType = link['@Type']?.toString()
-							def linkHref = link['@Href']?.toString()
+					def taskSuccess = taskData.result?.success
+					if(taskSuccess?.toString() == 'true') {
+						JsonUtils.getLinks(taskData).each { link ->
+							def linkType = link.type?.toString()
+							def linkHref = link.href?.toString()
 							if(linkType && linkHref)
 								rtn.links << [type: linkType, href: linkHref]
 						}
-					} else if(taskSuccess == 'false') {
+					} else if(taskSuccess?.toString() == 'false') {
 						rtn.success = false
-						def msg = results.data?.Result?.Message?.text()
+						def msg = taskData.result?.message?.toString()
 						if(msg?.indexOf('not found') > -1 && attempt < 3) {
 							//try again
 							sleep(taskSleepInterval)
@@ -1437,17 +1460,13 @@ class ApiService {
 			} else if(results.errorCode?.toString() == "500") {
 				def errorMessage
 				try {
-					def response = results.data
-					errorMessage = response["@Message"]
+					errorMessage = JsonUtils.getValue(results.data, 'Message')?.toString()
 				} catch (Exception ex1) {
-					try {
-						// we might encounter json here?
-						def response = results.data
-						errorMessage = response.Message
-					} catch (Exception ex2) {
-						// if all else fails, just treat it as a string
-						errorMessage = results.data?.toString()
-					}
+					log.debug("unable to parse task error response: ${ex1.message}", ex1)
+				}
+				if(!errorMessage) {
+					// if all else fails, just treat it as a string
+					errorMessage = results.data?.toString()
 				}
 				if(errorMessage =~ /^.*?no\s.*?\stask\swith\sid/) {
 					// "There is no backup task with id [task-297] in current rest session"
@@ -1466,21 +1485,6 @@ class ApiService {
 		return rtn
 	}
 	
-	static callXmlApi(Map authConfig, String apiUri, String method='GET', Map opts=[:]) {
-		log.debug "callXmlApi: ${apiUri}"
-		def rtn = [success:false, data: [:]]
-		def tokenResults = getToken(authConfig)
-		if(tokenResults.success == true) {
-			def uri = new URI(apiUri)
-			def headers = buildHeaders([:], tokenResults.token)
-			def query = [format: "Entity"]
-			HttpApiClient httpApiClient = new HttpApiClient()
-			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
-			rtn = httpApiClient.callXmlApi(authConfig.apiUrl, uri.path, requestOpts, method)
-		}
-		return rtn
-	}
-
 	static callJsonApi(Map authConfig, String apiUri, String method='GET', Map opts=[:]) {
 		log.debug "callJsonApi: ${apiUri}"
 		def rtn = [success:false, data: [:]]
@@ -1492,20 +1496,37 @@ class ApiService {
 			HttpApiClient httpApiClient = new HttpApiClient()
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers, queryParams: query)
 			rtn = httpApiClient.callJsonApi(authConfig.apiUrl, uri.path, requestOpts, method)
+			rtn.data = JsonUtils.normalize(rtn.data)
 		}
 		return rtn
 	}
 
+	/**
+	 * Extract the failure message from a task response returned by {@link #waitForTask}.
+	 *
+	 * @param taskResults the map returned by waitForTask
+	 * @return the failure message or null
+	 */
+	static String getTaskErrorMessage(Map taskResults) {
+		return taskResults?.msg ?: JsonUtils.get(taskResults?.data, 'result', 'message')?.toString()
+	}
+
+	/**
+	 * Build the standard request headers for the Veeam Enterprise Manager REST API. The XML representation of this
+	 * API is deprecated, so JSON is always requested.
+	 *
+	 * @param headers additional headers to merge in
+	 * @param token the session token returned by the logon request
+	 * @param opts unused, retained for call site compatibility
+	 * @return the header map
+	 */
 	static buildHeaders(Map headers, String token, Map opts=[:]) {
 		def rtn = [:]
 		if(token) {
 			rtn.'X-RestSvcSessionId' = token
 		}
-		if(opts.format == 'json') {
-			rtn.Accept = 'application/json'
-		} else {
-			rtn.Accept = 'application/xml'
-		}
+		rtn.Accept = 'application/json'
+		rtn.'Content-Type' = 'application/json'
 		// retain veeam 11 API functionality
 		rtn.'x-api-version' = '1.0-rev2'
 
@@ -1513,6 +1534,6 @@ class ApiService {
 	}
 
 	static buildJsonHeaders(Map headers, String token, Map opts=[:]) {
-		buildHeaders(headers, token, opts + [format: 'json'])
+		buildHeaders(headers, token, opts)
 	}
 }

@@ -1,5 +1,6 @@
 package com.morpheusdata.veeam.sync
 
+import com.morpheusdata.veeam.utils.JsonUtils
 import com.morpheusdata.core.BulkCreateResult
 import com.morpheusdata.core.MorpheusContext
 import com.morpheusdata.core.data.DataQuery
@@ -66,11 +67,11 @@ class BackupJobSync {
 			def addConfig = [
 				account: backupProviderModel.account, backupProvider: backupProviderModel, code: objCategory + '.' + cloudItem.uid,
 				category: objCategory, name: cloudItem.name, externalId: cloudItem.externalId,
-				source: 'veeam', enabled: (cloudItem.scheduleEnabled == 'true'), platform: (cloudItem.platform?.toLowerCase() ?: 'all'),
+				source: 'veeam', enabled: (cloudItem.scheduleEnabled?.toString() == 'true'), platform: (cloudItem.platform?.toLowerCase() ?: 'all'),
 				cronExpression: cloudItem.scheduleCron
 			]
 			//backup server
-			def backupServerRef = cloudItem.links?.link?.find { it.type == 'BackupServerReference' }
+			def backupServerRef = JsonUtils.findLink(cloudItem, 'BackupServerReference')
 			if (backupServerRef)
 				addConfig.internalId = VeeamUtils.extractVeeamUuid(backupServerRef.href)
 			def add = new BackupJob(addConfig)
@@ -109,7 +110,7 @@ class BackupJobSync {
 				existingItem.cronExpression = masterItem.scheduleCron
 				doSave = true
 			}
-			def masterItemEnabled = masterItem.scheduleEnabled == 'true'
+			def masterItemEnabled = masterItem.scheduleEnabled?.toString() == 'true'
 			if (existingItem.enabled != masterItemEnabled) {
 				existingItem.enabled = masterItemEnabled
 			}
