@@ -131,7 +131,7 @@ class ApiService {
 			log.debug("Supported API Versions results: ${results}")
 			if(results.success == true) {
 				def response = JsonUtils.normalizeMap(results.data)
-				JsonUtils.toList(JsonUtils.get(response, 'supportedVersions'), 'supportedVersion').each { supportedVersion ->
+				JsonUtils.getList(response, 'supportedVersions', 'supportedVersion').each { supportedVersion ->
 					log.debug("Veeam support API versions: ${supportedVersion}")
 					def row = (supportedVersion instanceof Map) ? new LinkedHashMap(supportedVersion) : [:]
 					row.version = row.name?.replace('v', '')?.replace('_', '.')?.toFloat()
@@ -284,7 +284,7 @@ class ApiService {
 			rtn.success = results.success
 			if(rtn.success) {
 				def response = JsonUtils.normalizeMap(results.data)
-				def hRoot = JsonUtils.toList(JsonUtils.get(response, 'entities', 'hierarchyRoots'), 'hierarchyRoot').getAt(0)
+				def hRoot = JsonUtils.getList(JsonUtils.get(response, 'entities'), 'hierarchyRoots', 'hierarchyRoot').getAt(0)
 				if(hRoot) {
 					rtn.data = [
 							id: hRoot.hierarchyRootId?.toString(),
@@ -493,7 +493,7 @@ class ApiService {
 		def response = JsonUtils.normalize(results.data)
 		rtn.taskId = JsonUtils.get(response, 'taskId')
 		rtn.data = []
-		JsonUtils.getEntityList(response, 'objectsInJob', 'objectInJob').each { vmInJob ->
+		JsonUtils.getEntityList(response, 'objectInJobs', 'objectInJob').each { vmInJob ->
 			rtn.data << [objectId: vmInJob.objectInJobId, objectRef: vmInJob.hierarchyObjRef, name: vmInJob.name]
 		}
 		rtn.success = results?.success
@@ -654,7 +654,7 @@ class ApiService {
 				def existingItems = []
 				def processingOpts
 				def response = JsonUtils.normalize(results.data)
-				JsonUtils.getEntityList(response, 'objectsInJob', 'objectInJob').each { vmInJob ->
+				JsonUtils.getEntityList(response, 'objectInJobs', 'objectInJob').each { vmInJob ->
 					if(vmInJob.objectInJobId) {
 						existingItems << vmInJob.objectInJobId.toString()
 						if(processingOpts == null)
@@ -703,7 +703,7 @@ class ApiService {
 								def jobResults = loadBackupJob(authConfig, jobId, opts)
 								if(jobResults.success == true) {
 									def includes = JsonUtils.get(jobResults.job, 'jobInfo', 'backupJobInfo', 'includes')
-									jobObject = JsonUtils.getList(includes, 'objectsInJob', 'objectInJob').find {
+									jobObject = JsonUtils.getList(includes, 'objectInJobs', 'objectInJob').find {
 										if(opts.externalId) {
 											def itMor = VeeamUtils.extractVmIdFromObjectRef(it.hierarchyObjRef?.toString())
 											def itUid = VeeamUtils.extractVeeamUuid(it.hierarchyObjRef?.toString())
