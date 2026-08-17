@@ -122,7 +122,9 @@ class JsonUtils {
 	}
 
 	/**
-	 * Read a collection property, tolerating both the bare array and singular-child-wrapped representations.
+	 * Read a collection property, tolerating the bare array, the singular-child-wrapped and the
+	 * same-name-wrapped representations. The last shape is used by the query endpoint and the API root, e.g.
+	 * {@code entities.backupJobSessions.backupJobSessions} and {@code supportedVersions.supportedVersions}.
 	 *
 	 * @param source the map to read from
 	 * @param key the collection property name, e.g. {@code links}
@@ -134,6 +136,14 @@ class JsonUtils {
 			return toList(source, childKey)
 		}
 		def value = source.containsKey(key) ? source[key] : (childKey ? source[childKey] : null)
+		if(value instanceof Map) {
+			if(childKey && value.containsKey(childKey)) {
+				return toList(value[childKey])
+			}
+			if(value.containsKey(key)) {
+				return toList(value[key])
+			}
+		}
 		return toList(value, childKey)
 	}
 

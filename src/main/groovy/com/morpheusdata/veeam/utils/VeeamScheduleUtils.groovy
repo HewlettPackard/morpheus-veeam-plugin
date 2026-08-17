@@ -37,7 +37,7 @@ class VeeamScheduleUtils {
 	static decodeScheduling(job) {
 		def rtn
 		//build a cron representation
-		def scheduleOptions = JsonUtils.get(job, 'jobScheduleOptions')
+		def scheduleOptions = getScheduleOptions(job)
 		def optionsDaily = JsonUtils.get(scheduleOptions, 'optionsDaily')
 		def optionsMonthly = JsonUtils.get(scheduleOptions, 'optionsMonthly')
 		def optionsPeriodically = JsonUtils.get(scheduleOptions, 'optionsPeriodically')
@@ -82,7 +82,7 @@ class VeeamScheduleUtils {
 			} else {
 				rtn = rtn + ' ' + months.join(',')
 			}
-			rtn + ' ?'
+			rtn = rtn + ' ?'
 		} else if(isEnabled(optionsPeriodically)) {
 			//add continuously support
 			def hour = optionsPeriodically.fullPeriod
@@ -90,6 +90,19 @@ class VeeamScheduleUtils {
 			rtn = '0 0 ' + hour + ' * * ?'
 		}
 		return rtn
+	}
+
+	/**
+	 * Resolve the block holding the schedule options of a job. Veeam nests them under a {@code Standart} (sic)
+	 * element, but the wrapper is not always present, so both layouts are supported.
+	 *
+	 * @param job a job entity normalized to camelCase by {@link JsonUtils}
+	 * @return the schedule options block, or null when the job has no schedule options
+	 */
+	static getScheduleOptions(job) {
+		def scheduleOptions = JsonUtils.get(job, 'jobScheduleOptions')
+		def standard = JsonUtils.get(scheduleOptions, 'standart')
+		return standard != null ? standard : scheduleOptions
 	}
 
 	/**
