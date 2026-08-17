@@ -83,6 +83,24 @@ class JsonUtilsSpec extends Specification {
 		JsonUtils.getEntityList([jobs: [job: [uid: 'a']]], 'jobs', 'job')*.uid == ['a']
 	}
 
+	void "getEntityList handles the same name wrapped collection shape used by the query endpoint"() {
+		given:
+		def response = JsonUtils.normalize([
+			Entities: [BackupJobSessions: [BackupJobSessions: [[UID: 'urn:veeam:BackupJobSession:a']]]]
+		])
+
+		expect:
+		JsonUtils.getList(JsonUtils.get(response, 'entities'), 'backupJobSessions', 'backupJobSession')*.uid == ['urn:veeam:BackupJobSession:a']
+	}
+
+	void "getList handles the same name wrapped collection shape used by the api root"() {
+		given:
+		def response = JsonUtils.normalize([SupportedVersions: [SupportedVersions: [[Name: 'v1_5'], [Name: 'v1_7']]]])
+
+		expect:
+		JsonUtils.getList(response, 'supportedVersions', 'supportedVersion')*.name == ['v1_5', 'v1_7']
+	}
+
 	void "getEntityList handles a root level collection"() {
 		expect:
 		JsonUtils.getEntityList([[uid: 'a']], 'jobs', 'job')*.uid == ['a']
