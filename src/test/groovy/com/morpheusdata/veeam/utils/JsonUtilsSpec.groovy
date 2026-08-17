@@ -130,6 +130,14 @@ class JsonUtilsSpec extends Specification {
 		JsonUtils.findLink(entity, 'BackupServerReference').href == 'a'
 	}
 
+	void "findLink tolerates a legacy config map holding a single link"() {
+		given: 'the xml representation collapsed a lone link into an element rather than a list'
+		def entity = [links: [link: [type: 'BackupServerReference', href: 'a']]]
+
+		expect:
+		JsonUtils.findLink(entity, 'BackupServerReference').href == 'a'
+	}
+
 	void "toLong coerces json numbers and legacy strings"() {
 		expect:
 		JsonUtils.toLong(value) == expected
