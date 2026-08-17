@@ -92,12 +92,22 @@ class ApiService {
 			HttpApiClient.RequestOptions requestOpts = new HttpApiClient.RequestOptions(headers:headers)
 			HttpApiClient httpApiClient = new HttpApiClient()
 			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, authConfig.username, authConfig.password, requestOpts, 'POST')
-			rtn.success = results?.success && results?.error != true
-			if(rtn.success == true) {
-				rtn.token = results.headers['X-RestSvcSessionId']
-				rtn.sessionId = JsonUtils.normalizeMap(results.data).sessionId?.toString()
-				authConfig.token = rtn.token
-				authConfig.sessionId = rtn.sessionId
+			if(results?.success && results?.error != true) {
+				def token = results.headers['X-RestSvcSessionId']
+				if(token) {
+					rtn.success = true
+					rtn.token = token
+					rtn.sessionId = JsonUtils.normalizeMap(results.data).sessionId?.toString()
+					authConfig.token = rtn.token
+					authConfig.sessionId = rtn.sessionId
+				} else {
+					// the request was answered by something other than the Enterprise Manager REST API, which
+					// happens when the integration points at the Veeam web console port instead of the API port
+					rtn.msg = 'Veeam did not return a session token, verify the Enterprise Manager REST API url and port'
+					rtn.content = results.content ?: results.data?.toString()
+					rtn.data = results.data
+					rtn.headers = results.headers
+				}
 			} else {
 				rtn.content = results.content ?: results.data?.toString()
 				rtn.data = results.data
