@@ -17,9 +17,9 @@ import com.morpheusdata.model.BackupResult;
 import com.morpheusdata.model.Backup;
 import com.morpheusdata.model.Instance
 import com.morpheusdata.veeam.services.ApiService
+import com.morpheusdata.veeam.utils.JsonUtils
 import com.morpheusdata.veeam.utils.VeeamUtils
 import groovy.util.logging.Slf4j
-import groovy.xml.StreamingMarkupBuilder
 
 @Slf4j
 interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
@@ -180,7 +180,7 @@ interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
 			def restoreOpts = buildApiRestoreOpts(authConfig, backupResult, backup, server, cloud)
 			log.debug("restoreBackup:[apiUrl: {}, vmId: {}, backupSessionId: {}, opts: {}", authConfig.apiUrl, objectRef, backupSessionId, restoreOpts)
 			String restorePath = getRestorePath(authConfig, token, backupResult, objectRef, backupSessionId, restoreOpts)
-			String restoreSpec = buildRestoreSpec(restorePath, hierarchyRoot, opts.backupType, restoreOpts)
+			Map restoreSpec = buildRestoreSpec(restorePath, hierarchyRoot, opts.backupType as String, restoreOpts)
 			def restoreResults = apiService.restoreVM(authConfig.apiUrl, token, restorePath, restoreSpec)
 
 			log.debug("restoreBackup result: {}", restoreResults)
@@ -310,13 +310,13 @@ interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
 	 */
 	default String getRestoreLinkFromRestoreHref(Map authConfig, String restoreHref, String restoreType) {
 		String restoreLink = null
-		def response = apiService.callXmlApi(authConfig, restoreHref)
+		def response = apiService.callJsonApi(authConfig, restoreHref)
 		log.debug("getRestoreLinkFromRestoreHref response: ${response}")
 		if(response.success == true) {
-			response.data[restoreType].Links.Link.each { link ->
-				if(link['@Type'] == "Restore" || link['@Rel'] == "Restore") {
-					restoreLink = new URI(link['@Href']?.toString()).path
-				}
+			def entity = JsonUtils.get(response.data, JsonUtils.getCamelKeyName(restoreType)) ?: response.data
+			def link = JsonUtils.findLink(entity, "Restore")
+			if(link) {
+				restoreLink = new URI(link.href?.toString()).path
 			}
 		}
 
@@ -334,10 +334,10 @@ interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
 		def response = apiService.getVmRestorePointsFromRestorePointId(authConfig, restorePointId)
 		log.debug("getVmRestorePointsFromRestorePointId response: ${response}")
 		if(response.success == true) {
-			response.data.VmRestorePoint.Links.Link.each { link ->
-				if(link['@Type'] == "Restore" || link['@Rel'] == "Restore") {
-					def restoreUrl = new URI(link['@Href']?.toString())
-					restoreLink = restoreUrl.path
+			JsonUtils.getEntityList(response.data, 'vmRestorePoints', 'vmRestorePoint').each { restorePoint ->
+				def link = JsonUtils.findLink(restorePoint, "Restore")
+				if(link && !restoreLink) {
+					restoreLink = new URI(link.href?.toString()).path
 				}
 			}
 		}
@@ -356,10 +356,9 @@ interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
 		def response = apiService.getRestorePointFromRestorePointId(authConfig, restorePointId)
 		log.debug("getRestoreLinkFromRestorePointId response: ${response}")
 		if(response.success == true) {
-			response.data.Links.Link.each { link ->
-				if(link['@Rel'] == "Restore") {
-					restoreLink = new URI(link['@Href']?.toString()).path
-				}
+			def link = JsonUtils.findLink(response.data, "Restore")
+			if(link) {
+				restoreLink = new URI(link.href?.toString()).path
 			}
 		}
 
@@ -378,15 +377,15 @@ interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
 		log.debug("backupSession results: ${backupSessionResponse}")
 		//find restore points
 		if(backupSessionResponse?.success) {
-			def backupSessionData = backupSessionResponse.data
-			log.debug("backup results retore links: ${backupSessionData.Links.Link}")
-			backupSessionData.Links.Link.each { link ->
-				if(link['@Type'] == "RestorePointReference") {
-					def restorePointsUrl = new URI(link['@Href'].toString())
+			def links = JsonUtils.getLinks(backupSessionResponse.data)
+			log.debug("backup results retore links: ${links}")
+			links.each { link ->
+				if(link.type == "RestorePointReference") {
+					def restorePointsUrl = new URI(link.href?.toString())
 					restorePointsLink = "${restorePointsUrl.path}/vmRestorePoints"
 				}
-				if(link['@Type'] == "VmRestorePoint") {
-					restorePointsLink = new URI(link['@Href']?.toString()).path
+				if(link.type == "VmRestorePoint") {
+					restorePointsLink = new URI(link.href?.toString()).path
 				}
 			}
 		}
@@ -404,17 +403,19 @@ interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
 		def restorePointsLink = null
 		def backupSessionResponse = apiService.getBackupSession(authConfig, backupSessionId)
 		if(backupSessionResponse.success) {
-			def backupName =  backupSessionResponse.data.jobName // the backup session and the backup(result) should have the same name
+			def backupName = JsonUtils.get(backupSessionResponse.data, 'jobName') // the backup session and the backup(result) should have the same name
 			def backupResults = apiService.fetchQuery(authConfig, "Backup", [Name: backupName])
-			def restoreRefList = backupResults.data.refs?.ref?.links?.link?.find { it.type == "RestorePointReferenceList" }
+			def refs = JsonUtils.getEntityList(JsonUtils.normalize(backupResults.data), 'refs', 'ref')
+			def restoreRefList = refs.findResult { ref -> JsonUtils.findLink(ref, "RestorePointReferenceList") }
 			if(restoreRefList) {
 				// get a list of restore points from the backup
-				def refListResponse = apiService.callJsonApi(authConfig, restoreRefList.href)
+				def refListResponse = apiService.callJsonApi(authConfig, restoreRefList.href?.toString())
 				if(refListResponse?.success) {
 					// we need the vm restore point to execute the restore
-					refListResponse.data.RestorePoint.Links.Link.each { link ->
-						if(link['Type'] == "VmRestorePointReferenceList") {
-							restorePointsLink = new URI(link['Href']?.toString()).path
+					JsonUtils.getEntityList(refListResponse.data, 'restorePoints', 'restorePoint').each { restorePoint ->
+						def link = JsonUtils.findLink(restorePoint, "VmRestorePointReferenceList")
+						if(link && !restorePointsLink) {
+							restorePointsLink = new URI(link.href?.toString()).path
 						}
 					}
 				}
@@ -435,24 +436,26 @@ interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
 	 */
 	default String getRestoreLinkFromRestorePoints(Map authConfig, String restorePointsLink, String objectRef, String vmName, String vCenterVmId) {
 		String restoreLink = null
-		def restoreLinkResponse = apiService.callXmlApi(authConfig, restorePointsLink.toString())
+		def restoreLinkResponse = apiService.callJsonApi(authConfig, restorePointsLink.toString())
 		log.debug("got: ${restoreLinkResponse}")
 		if(restoreLinkResponse?.success) {
-			def restorePoint
-			if(restoreLinkResponse.data.name() == "VmRestorePoints") {
-				restorePoint = restoreLinkResponse.data.VmRestorePoint.find { it.HierarchyObjRef.text().toString().toLowerCase() == objectRef?.toLowerCase() || it.VmName.text().toString() == vmName }
-				if(!restorePoint && vCenterVmId) {
-					restorePoint = restoreLinkResponse.data.VmRestorePoint.find { it.HierarchyObjRef.text().toString().endsWith(vCenterVmId) }
-				}
-			} else {
-				restorePoint = restoreLinkResponse
+			def restorePoints = JsonUtils.getEntityList(restoreLinkResponse.data, 'vmRestorePoints', 'vmRestorePoint')
+			if(restorePoints.isEmpty() && restoreLinkResponse.data instanceof Map) {
+				// the endpoint returns the restore point entity itself rather than a collection when there is only one
+				restorePoints = [restoreLinkResponse.data]
+			}
+			def restorePoint = restorePoints.find { it.hierarchyObjRef?.toString()?.toLowerCase() == objectRef?.toLowerCase() || it.vmName?.toString() == vmName }
+			if(!restorePoint && vCenterVmId) {
+				restorePoint = restorePoints.find { it.hierarchyObjRef?.toString()?.endsWith(vCenterVmId) }
+			}
+			if(!restorePoint && restorePoints.size() == 1) {
+				restorePoint = restorePoints.first()
 			}
 
 			if(restorePoint) {
-				restorePoint.Links.Link.each { link ->
-					if(link['@Rel']?.toString() == "Restore") {
-						restoreLink = new URI(link['@Href']?.toString()).path
-					}
+				def link = JsonUtils.findLink(restorePoint, "Restore")
+				if(link) {
+					restoreLink = new URI(link.href?.toString()).path
 				}
 			}
 		}
@@ -462,24 +465,21 @@ interface VeeamBackupRestoreProviderInterface extends BackupRestoreProvider {
 
 	/**
 	 * Build the restore spec for the restore operation. This is a convenient way to build the restore spec for the
-	 * restore operation. The restore spec is an XML document that is used to configure the restore operation.
+	 * restore operation. The restore spec is a JSON document that is used to configure the restore operation.
 	 * @param restorePath the restore path
 	 * @param hierarchyRoot the hierarchy root
 	 * @param backupType the backup type
 	 * @param opts optional parameters used for configuration.
-	 * @return the restore spec as a string
+	 * @return the restore spec request body
 	 */
-	default String buildRestoreSpec(String restorePath, String hierarchyRoot, String backupType, Map opts) {
-		def xml = new StreamingMarkupBuilder().bind() {
-			RestoreSpec("xmlns": "http://www.veeam.com/ent/v1.0", "xmlns:xsd": "http://www.w3.org/2001/XMLSchema", "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance") {
-				VmRestoreSpec() {
-					"PowerOnAfterRestore"(true)
-					"QuickRollback"(false)
-				}
-			}
-		}
-
-		return xml.toString()
+	default Map buildRestoreSpec(String restorePath, String hierarchyRoot, String backupType, Map opts) {
+		// request bodies remain PascalCase, only the response representation changed casing in Veeam 13
+		return [
+			VmRestoreSpec: [
+				PowerOnAfterRestore: true,
+				QuickRollback: false
+			]
+		]
 	}
 
 	/**

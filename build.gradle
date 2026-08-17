@@ -72,6 +72,7 @@ dependencies {
 	testImplementation "org.spockframework:spock-core"
 	testImplementation "org.spockframework:spock-junit4"  // you can remove this if your code does not rely on old JUnit 4 rules
 	testImplementation 'cglib:cglib-nodep:3.2.12'
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
 
 
@@ -111,6 +112,7 @@ task(console, dependsOn: 'classes', type: JavaExec) {
 }
 
 test {
+	useJUnitPlatform()
 	testLogging {
 		exceptionFormat = 'full'
 		showStandardStreams = true
