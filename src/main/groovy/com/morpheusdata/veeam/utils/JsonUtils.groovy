@@ -27,7 +27,15 @@ class JsonUtils {
 		if(value instanceof Map) {
 			def rtn = [:]
 			value.each { key, entry ->
-				rtn[getCamelKeyName(key.toString())] = normalize(entry)
+				def name = getCamelKeyName(key.toString())
+				def normalized = normalize(entry)
+				// the deprecated XML representation nested link collections under a singular child element and that
+				// shape is persisted in backup repository and managed server configs, so it has to be preserved for
+				// the views and services that read those configs back
+				if(name == 'links' && normalized instanceof Collection) {
+					normalized = [link: normalized as List]
+				}
+				rtn[name] = normalized
 			}
 			return rtn
 		}

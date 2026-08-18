@@ -24,11 +24,30 @@ class JsonUtilsSpec extends Specification {
 
 	void "normalize recurses into collections"() {
 		when:
-		def result = JsonUtils.normalize([Links: [[Type: 'BackupServerReference', Href: 'http://host/api/backupServers/1']]])
+		def result = JsonUtils.normalize([Entities: [[Type: 'BackupServerReference', Href: 'http://host/api/backupServers/1']]])
 
 		then:
-		result.links[0].type == 'BackupServerReference'
-		result.links[0].href == 'http://host/api/backupServers/1'
+		result.entities[0].type == 'BackupServerReference'
+		result.entities[0].href == 'http://host/api/backupServers/1'
+	}
+
+	void "normalize nests links under a singular child so persisted configs keep the legacy shape"() {
+		when:
+		def result = JsonUtils.normalize([Links: [[Type: 'BackupServerReference', Name: 'veeam01', Href: 'http://host/api/backupServers/1']]])
+
+		then: 'the shape the morpheus-ui backup repository and managed server views read'
+		result.links.link[0].type == 'BackupServerReference'
+		result.links.link.find { it.type == 'BackupServerReference' }?.name == 'veeam01'
+
+		and: 'the plugin accessors still resolve it'
+		JsonUtils.getLinks(result).size() == 1
+		JsonUtils.findLink(result, 'BackupServerReference')?.name == 'veeam01'
+	}
+
+	void "normalize leaves a links value that is not a collection alone"() {
+		expect:
+		JsonUtils.normalize([Links: null]).links == null
+		JsonUtils.getLinks(JsonUtils.normalize([Links: null])) == []
 	}
 
 	void "getValue reads a property regardless of casing"() {
