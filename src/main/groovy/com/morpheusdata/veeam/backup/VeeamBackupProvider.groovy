@@ -397,7 +397,7 @@ class VeeamBackupProvider extends AbstractBackupProvider {
 						morpheus.async.backupProvider.updateStatus(backupProviderModel, 'error', 'invalid credentials').subscribe().dispose()
 					} else {
 						log.debug("refreshBackupProvider: error connecting to host")
-						morpheus.async.backupProvider.updateStatus(backupProviderModel, 'error', 'error connecting').subscribe().dispose()
+						morpheus.async.backupProvider.updateStatus(backupProviderModel, 'error', testResults.msg ?: 'error connecting').subscribe().dispose()
 					}
 				}
 			} else {
@@ -420,6 +420,9 @@ class VeeamBackupProvider extends AbstractBackupProvider {
 			def sessionId = tokenResults.sessionId
 			apiService.logoutSession(opts.authConfig.apiUrl, token, sessionId)
 		} else {
+			// surface the reason the logon failed so it reaches the user and the logs rather than a generic message
+			rtn.msg = tokenResults.msg
+			log.warn("veeam authentication failed: {}, errorCode: {}, content: {}", tokenResults.msg, tokenResults.errorCode, tokenResults.content)
 			if(tokenResults?.errorCode?.toString() == "404") {
 				rtn.found = false
 			}
