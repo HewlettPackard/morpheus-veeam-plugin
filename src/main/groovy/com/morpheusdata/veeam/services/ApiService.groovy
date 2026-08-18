@@ -1350,7 +1350,7 @@ class ApiService {
 		def rtn = [success:false]
 		//find the VM under the VM cloud
 		def vmId
-		if(managedServerId) {
+		if(managedServerId && vmName) {
 			def hierarchyRoot = managedServerId.contains("HierarchyRoot") ? managedServerId : "urn:veeam:HierarchyRoot:${managedServerId}"
 			def headers = buildHeaders([:], token)
 			def query = [host: hierarchyRoot, name: vmName, type: 'Vm']
@@ -1382,6 +1382,10 @@ class ApiService {
 	//get the veeam VM ID given the veeam managed server ID (hiearchy root) and vmware VM ref ID
 	static getVmId(url, token, vmHierachyRef) {
 		def rtn = [success:false]
+		if(!vmHierachyRef) {
+			rtn.msg = "A VM hierarchy reference is required to look up a VM in Veeam."
+			return rtn
+		}
 		def headers = buildHeaders([:], token)
 		def query = [hierarchyRef: vmHierachyRef]
 		log.debug("getVmId query: ${query}")
