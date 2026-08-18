@@ -93,7 +93,7 @@ class ApiService {
 			HttpApiClient httpApiClient = new HttpApiClient()
 			def results = httpApiClient.callJsonApi(authConfig.apiUrl, apiPath, authConfig.username, authConfig.password, requestOpts, 'POST')
 			if(results?.success && results?.error != true) {
-				def token = results.headers['X-RestSvcSessionId']
+				def token = findSessionToken(results.headers)
 				if(token) {
 					rtn.success = true
 					rtn.token = token
@@ -103,12 +103,13 @@ class ApiService {
 				} else {
 					// the request was answered by something other than the Enterprise Manager REST API, which
 					// happens when the integration points at the Veeam web console port instead of the API port
-					rtn.msg = 'Veeam did not return a session token, verify the Enterprise Manager REST API url and port'
+					rtn.msg = "Veeam did not return a session token from ${authConfig.apiUrl}${apiPath}, verify the Enterprise Manager REST API url and port".toString()
 					rtn.content = results.content ?: results.data?.toString()
 					rtn.data = results.data
 					rtn.headers = results.headers
 				}
 			} else {
+				rtn.msg = "Veeam logon to ${authConfig.apiUrl}${apiPath} failed${results?.errorCode ? ' with HTTP ' + results.errorCode : ''}".toString()
 				rtn.content = results.content ?: results.data?.toString()
 				rtn.data = results.data
 				rtn.errorCode = results.errorCode
@@ -116,6 +117,18 @@ class ApiService {
 			}
 		}
 		return rtn
+	}
+
+	/**
+	 * Locate the Veeam session token in the logon response headers. The header name is matched without regard to
+	 * case because proxies and HTTP/2 may normalize header names.
+	 *
+	 * @param headers the response headers
+	 * @return the session token or null
+	 */
+	static String findSessionToken(Map headers) {
+		def entry = headers?.find { it.key?.toString()?.equalsIgnoreCase('X-RestSvcSessionId') }
+		return entry?.value?.toString()
 	}
 
 	static logout(url, token, sessionId){
