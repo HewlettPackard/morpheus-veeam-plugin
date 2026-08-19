@@ -93,7 +93,7 @@ jar {
 				'Morpheus-Logo-Dark': 'assets/veeam.svg',
 				'Morpheus-Labels': 'Plugin, Backup',
 				'Morpheus-Repo': 'https://github.com/gomorpheus/morpheus-veeam-plugin',
-				'Morpheus-Min-Appliance-Version': "morphApplianceMinVersion"
+				'Morpheus-Min-Appliance-Version': morphApplianceMinVersion
 		)
 	}
 }
