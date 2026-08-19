@@ -422,7 +422,12 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 						log.debug("executeBackup result: " + rtn)
 					} else {
 						rtn.success = false
-						rtn.error = "Could not find VM with VMware ID ${computeServer.externalId} on any Veeam managed server"
+						def hierarchyRoot = VeeamUtils.getHierarchyRoot(backup)
+						if(hierarchyRoot) {
+							rtn.error = "Could not find a VM with the VMWare ID ${computeServer.externalId} on the root ${hierarchyRoot}"
+						} else {
+							rtn.error = "Could not determine the Veeam hierarchy root for backup ${backup.id}, verify a managed server is configured on the backup."
+						}
 					}
 				} else {
 					rtn.success = false

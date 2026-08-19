@@ -1501,7 +1501,7 @@ class ApiService {
 		}
 		return rtn
 	}
-	
+
 	static callJsonApi(Map authConfig, String apiUri, String method='GET', Map opts=[:]) {
 		log.debug "callJsonApi: ${apiUri}"
 		def rtn = [success:false, data: [:]]
