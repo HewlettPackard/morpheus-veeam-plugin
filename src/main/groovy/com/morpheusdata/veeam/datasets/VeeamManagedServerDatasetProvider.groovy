@@ -10,6 +10,7 @@ import com.morpheusdata.core.data.DataQuery
 import com.morpheusdata.core.data.DatasetInfo
 import com.morpheusdata.core.data.DatasetQuery
 import com.morpheusdata.core.providers.AbstractDatasetProvider
+import com.morpheusdata.model.BackupProvider
 import com.morpheusdata.model.ReferenceData
 import com.morpheusdata.model.ResourcePermission
 import com.morpheusdata.veeam.backup.VeeamBackupProvider
@@ -162,17 +163,22 @@ class VeeamManagedServerDatasetProvider extends AbstractDatasetProvider<Referenc
     }
 
     /**
-     * Resolve the veeam backup provider for the given cloud, mirroring the embedded {@code VeeamOptionSourceService}:
-     * prefer the cloud's integrated backup provider when it is veeam-typed, otherwise fall back to an enabled
-     * veeam provider owned by the account, then to a master/public veeam provider. The type filter keeps this
-     * self-contained, so the plugin never claims another backup provider plugin's integration.
+     * Resolve the veeam backup provider for the given cloud: prefer the veeam-typed provider explicitly bound to
+     * the cloud's backupProviders list (as core's BackupProviderService#getBackupProvider does; the legacy singular
+     * cloud.backupProvider field is deprecated and intentionally not consulted here), otherwise fall back to an
+     * enabled veeam provider owned by the account, then to a master/public veeam provider. The type filter keeps
+     * this self-contained, so the plugin never claims another backup provider plugin's integration.
+     *
+     * Note: cloud.backupProviders entries are only partially marshalled (e.g. type is null), so candidate ids are
+     * collected and re-fetched via listById to get a fully populated BackupProvider with its type.
      */
     private resolveVeeamBackupProvider(cloud, account) {
-        def backupProvider
-        if (cloud?.backupProvider) {
-            def integrated = morpheus.services.backupProvider.get(cloud.backupProvider.id)
-            if (integrated?.type?.code == VeeamBackupProvider.PROVIDER_CODE) {
-                backupProvider = integrated
+        BackupProvider backupProvider = null
+        if (cloud?.backupProviders) {
+            def cloudProviderIds = cloud.backupProviders.collect { it.id }
+            if (cloudProviderIds) {
+                backupProvider = morpheus.services.backupProvider.listById(cloudProviderIds)
+                        .find { it.type?.code == VeeamBackupProvider.PROVIDER_CODE }
             }
         }
         if (!backupProvider && account) {
