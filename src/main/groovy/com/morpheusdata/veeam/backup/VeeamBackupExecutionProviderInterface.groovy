@@ -372,7 +372,7 @@ interface VeeamBackupExecutionProviderInterface extends BackupExecutionProvider 
 				log.debug("getting last result")
 				def lastResult = morpheus.services.backup.backupResult.find(new DataQuery().withFilters(
 					new DataFilter("backup.id", backup.id),
-					new DataFilter("status", "ne", BackupResult.Status.START_REQUESTED)
+					new DataFilter("status", "!=", BackupResult.Status.START_REQUESTED)
 				).withSort("dateCreated", DataQuery.SortOrder.desc))
 
 				log.debug("last result: ${lastResult}")
