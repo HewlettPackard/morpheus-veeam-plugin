@@ -73,13 +73,13 @@ class VeeamBackupRepositoryDatasetProvider extends AbstractDatasetProvider<Backu
                     new DataFilter("backupProvider.id", backupProvider.id),
                     new DataFilter("enabled", true)
             ])
-            def dataOrFilter = new DataOrFilter(
+            def dataOrFilter = new DataOrFilter().withFilters([
                     new DataFilter("account.id", account.id),
                     new DataAndFilter(
                             new DataFilter("account.masterAccount", true),
                             new DataFilter("visibility", "public")
                     )
-            )
+            ])
             if (accessibleResourceIds) {
                 dataOrFilter.withFilter(new DataFilter("id", "in", accessibleResourceIds))
             }
