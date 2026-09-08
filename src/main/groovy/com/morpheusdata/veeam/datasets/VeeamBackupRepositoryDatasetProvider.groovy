@@ -67,7 +67,6 @@ class VeeamBackupRepositoryDatasetProvider extends AbstractDatasetProvider<Backu
             return Observable.empty()
         }
         def backupProvider = resolveBackupProvider(cloudId, account)
-        println "\u001B[33mAC Log - VeeamBackupRepositoryDatasetProvider:list- ${backupProvider.dump()}\u001B[0m"
         if (backupProvider) {
             def accessibleResourceIds = morpheus.services.resourcePermission.listAccessibleResources(account.id, ResourcePermission.ResourceType.BackupRepository, null, null)
             def dataQuery = new DataQuery().withFilters([
