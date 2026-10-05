@@ -95,7 +95,7 @@ class VeeamVcdBackupTypeProvider extends VeeamBackupTypeProvider {
 	 */
 	@Override
 	Boolean getRestoreNewEnabled() {
-		return true
+		return false
 	}
 
 	/**

@@ -93,7 +93,7 @@ class VeeamVMwareBackupTypeProvider extends VeeamBackupTypeProvider {
 	 */
 	@Override
 	Boolean getRestoreNewEnabled() {
-		return true
+		return false
 	}
 
 	/**
