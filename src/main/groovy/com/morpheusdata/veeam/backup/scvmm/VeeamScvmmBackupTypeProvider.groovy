@@ -95,7 +95,7 @@ class VeeamScvmmBackupTypeProvider extends VeeamBackupTypeProvider {
 	 */
 	@Override
 	Boolean getRestoreNewEnabled() {
-		return true
+		return false
 	}
 
 	/**

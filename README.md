@@ -49,7 +49,7 @@ The plugin provides these cloud-scoped backup types:
 | Veeam SCVMM VM Backup | `veeamScvmmBackup` | `scvmm` | Offline VM restore |
 | Veeam VCD VM Backup | `veeamVcdBackup` | `vcd` | Offline VM restore |
 
-Each backup type supports restoring an existing workload or restoring to a new virtual machine.
+Each backup type supports restoring a backup in place to the protected workload.
 
 ### Backup Job Management
 
@@ -73,7 +73,6 @@ Supported workload operations include:
 - Poll Veeam tasks, backup sessions, and task sessions
 - Track backup sizes and results in Morpheus
 - Restore a backup over the existing workload
-- Restore a deleted workload or restore to a new virtual machine
 - Poll restore tasks and sessions until completion
 
 ### Option Sources and Datasets
@@ -192,7 +191,7 @@ Run the configured backup from the workload's **Backups** tab or execute its bac
 
 ### Restoring a Workload
 
-Select a successful backup result and choose **Restore**. Restore the protected workload in place or restore it to a new virtual machine. Morpheus resolves the Veeam restore point, follows the restore action link returned by the API, and monitors the restore task and session to completion.
+Select a successful backup result and choose **Restore** to restore the protected workload in place. Morpheus resolves the Veeam restore point, follows the restore action link returned by the API, and monitors the restore task and session to completion.
 
 ---
 
